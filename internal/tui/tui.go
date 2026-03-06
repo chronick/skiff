@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -108,6 +109,29 @@ type model struct {
 	showStats       bool
 	containerLogSrc bool
 	containerLogRaw string
+	viewingName     string // pinned name for logs/detail view, independent of cursor
+}
+
+// findIndex returns the list index for a given name, or 0 if not found.
+func (m model) findIndex(name string) int {
+	for i, r := range m.resources {
+		if r.Name == name {
+			return i
+		}
+	}
+	for i, s := range m.schedules {
+		if s.Name == name {
+			return len(m.resources) + i
+		}
+	}
+	// Clamp to valid range
+	if max := m.listLen() - 1; max >= 0 {
+		if m.cursor > max {
+			return max
+		}
+		return m.cursor
+	}
+	return 0
 }
 
 // listLen returns the total number of selectable items (resources + schedules).
@@ -141,6 +165,36 @@ func (m model) selectedIsContainer() bool {
 		return m.resources[m.cursor].Type == "container"
 	}
 	return false
+}
+
+// viewingIsContainer returns true if viewingName refers to a container resource.
+func (m model) viewingIsContainer() bool {
+	for _, r := range m.resources {
+		if r.Name == m.viewingName {
+			return r.Type == "container"
+		}
+	}
+	return false
+}
+
+// viewingResource returns the resource matching viewingName, or nil.
+func (m model) viewingResource() *client.ResourceInfo {
+	for _, r := range m.resources {
+		if r.Name == m.viewingName {
+			return &r
+		}
+	}
+	return nil
+}
+
+// viewingSchedule returns the schedule matching viewingName, or nil.
+func (m model) viewingSchedule() *client.ScheduleInfo {
+	for _, s := range m.schedules {
+		if s.Name == m.viewingName {
+			return &s
+		}
+	}
+	return nil
 }
 
 // selectedResource returns the resource at cursor, or nil.
@@ -254,12 +308,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.connected = false
 		} else {
 			m.connected = true
+
+			// Remember which name the cursor is on before updating
+			prevName := m.selectedName()
+
 			m.resources = msg.snap.Resources
 			m.schedules = msg.snap.Schedules
-			// Clamp cursor
-			if max := m.listLen() - 1; max >= 0 && m.cursor > max {
-				m.cursor = max
-			}
+
+			// Sort both by name for stable ordering
+			sort.Slice(m.resources, func(i, j int) bool {
+				return m.resources[i].Name < m.resources[j].Name
+			})
+			sort.Slice(m.schedules, func(i, j int) bool {
+				return m.schedules[i].Name < m.schedules[j].Name
+			})
+
+			// Restore cursor to the same named item
+			m.cursor = m.findIndex(prevName)
 		}
 		return m, nil
 
@@ -308,11 +373,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		cmds := []tea.Cmd{tick(), fetchStatus(m.client)}
-		if m.view == viewLogs && m.selectedName() != "" {
+		if m.view == viewLogs && m.viewingName != "" {
 			if m.containerLogSrc {
-				cmds = append(cmds, fetchContainerLogs(m.client, m.selectedName(), 200))
+				cmds = append(cmds, fetchContainerLogs(m.client, m.viewingName, 200))
 			} else {
-				cmds = append(cmds, fetchLogs(m.client, m.selectedName()))
+				cmds = append(cmds, fetchLogs(m.client, m.viewingName))
 			}
 		}
 		if m.view == viewStats || m.showStats {
@@ -359,12 +424,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter", "l":
 		if m.view == viewDashboard && m.listLen() > 0 {
+			m.viewingName = m.selectedName()
 			m.view = viewLogs
 			m.logOffset = 0
 			m.logs = nil
 			m.containerLogRaw = ""
 			m.containerLogSrc = false
-			return m, fetchLogs(m.client, m.selectedName())
+			return m, fetchLogs(m.client, m.viewingName)
 		}
 
 	case "esc":
@@ -374,15 +440,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.logs = nil
 			m.containerLogRaw = ""
 			m.containerLogSrc = false
+			m.viewingName = ""
 		case viewStats:
 			m.view = viewDashboard
 		case viewDetail:
 			m.view = viewDashboard
 			m.logOffset = 0
+			m.viewingName = ""
 		}
 
 	case "i":
 		if m.view == viewDashboard && m.listLen() > 0 {
+			m.viewingName = m.selectedName()
 			m.view = viewDetail
 			m.logOffset = 0
 		}
@@ -402,13 +471,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "c":
-		if m.view == viewLogs && m.selectedIsContainer() {
+		if m.view == viewLogs && m.viewingIsContainer() {
 			m.containerLogSrc = !m.containerLogSrc
 			m.logOffset = 0
 			if m.containerLogSrc {
-				return m, fetchContainerLogs(m.client, m.selectedName(), 200)
+				return m, fetchContainerLogs(m.client, m.viewingName, 200)
 			}
-			return m, fetchLogs(m.client, m.selectedName())
+			return m, fetchLogs(m.client, m.viewingName)
 		}
 
 	case "s":
@@ -624,7 +693,7 @@ func (m model) renderScheduleRow(globalIdx int, s client.ScheduleInfo) string {
 func (m model) renderLogs() string {
 	var b strings.Builder
 
-	name := m.selectedName()
+	name := m.viewingName
 	title := titleStyle.Render(" ✈  plane ")
 	srcLabel := "ring buffer"
 	if m.containerLogSrc {
@@ -697,7 +766,7 @@ func (m model) renderLogs() string {
 	}
 
 	var footer string
-	if m.selectedIsContainer() {
+	if m.viewingIsContainer() {
 		footer = " esc back │ ↑↓ scroll │ c toggle source │ q quit"
 	} else {
 		footer = " esc back │ ↑↓ scroll │ q quit"
@@ -750,15 +819,15 @@ func (m model) renderDetail() string {
 	var b strings.Builder
 
 	title := titleStyle.Render(" ✈  plane ")
-	name := m.selectedName()
+	name := m.viewingName
 	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render(name) + dimStyle.Render(" detail")
 	b.WriteString(title + breadcrumb + "\n\n")
 
 	var detailLines []string
 
-	if r := m.selectedResource(); r != nil {
+	if r := m.viewingResource(); r != nil {
 		detailLines = m.resourceDetailLines(r)
-	} else if s := m.selectedSchedule(); s != nil {
+	} else if s := m.viewingSchedule(); s != nil {
 		detailLines = m.scheduleDetailLines(s)
 	} else {
 		detailLines = []string{"  No item selected"}
