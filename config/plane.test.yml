@@ -43,14 +43,12 @@ services:
 containers:
   # Test nginx container
   nginx:
-    image: nginx:latest
+    image: docker.io/library/nginx:latest
     ports:
       - "8080:80"
-    volumes:
-      - /tmp/plane-test/nginx.conf:/etc/nginx/nginx.conf
     health_check:
-      type: tcp
-      port: 80
+      type: http
+      url: "http://localhost:8080/"
       interval_secs: 10
       failure_threshold: 2
       auto_restart: true

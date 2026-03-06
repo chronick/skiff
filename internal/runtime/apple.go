@@ -2,21 +2,21 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/chronick/plane/internal/runner"
 )
 
-// AppleRuntime implements ContainerRuntime using Apple Container CLI.
-// NOTE: The exact Apple Container CLI commands need research before this
-// implementation is production-ready. This is a best-effort implementation
-// based on expected CLI patterns.
+// AppleRuntime implements ContainerRuntime using the Apple Container CLI
+// (https://apple.github.io/container/documentation/).
 type AppleRuntime struct {
 	runner runner.ProcessRunner
-	binary string // path to container CLI binary
+	binary string
 	logger *slog.Logger
+	dnsIP  string
+	dnsPort int
 }
 
 // NewAppleRuntime creates an AppleRuntime.
@@ -41,42 +41,56 @@ func (a *AppleRuntime) Run(ctx context.Context, name string, cfg ContainerConfig
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 	if cfg.CPUs > 0 {
-		args = append(args, "--cpus", fmt.Sprintf("%.1f", cfg.CPUs))
+		args = append(args, "--cpus", fmt.Sprintf("%.0f", cfg.CPUs))
 	}
 	if cfg.Memory != "" {
 		args = append(args, "--memory", cfg.Memory)
 	}
+	if a.dnsIP != "" {
+		args = append(args, "--dns", a.dnsIP)
+	}
 
 	args = append(args, cfg.Image)
 	a.logger.Info("starting container", "name", name, "image", cfg.Image)
-	_, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
-	return err
+	out, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
+	if err != nil {
+		return fmt.Errorf("container run: %w: %s", err, string(out))
+	}
+	return nil
 }
 
 func (a *AppleRuntime) Stop(ctx context.Context, name string) error {
 	a.logger.Info("stopping container", "name", name)
-	_, err := a.runner.Run(ctx, a.binary, []string{"stop", name}, runner.RunOpts{})
+	out, err := a.runner.Run(ctx, a.binary, []string{"stop", name}, runner.RunOpts{})
 	if err != nil {
-		// Try rm if stop fails (container may already be stopped)
-		_, _ = a.runner.Run(ctx, a.binary, []string{"rm", name}, runner.RunOpts{})
+		a.logger.Debug("stop failed, trying delete", "name", name, "error", err)
+		// Container may already be stopped; try delete
+		out2, err2 := a.runner.Run(ctx, a.binary, []string{"delete", name}, runner.RunOpts{})
+		if err2 != nil {
+			return fmt.Errorf("container stop/delete: %w: %s / %s", err, string(out), string(out2))
+		}
 	}
-	return err
+	return nil
 }
 
 func (a *AppleRuntime) Build(ctx context.Context, name string, cfg ContainerConfig) error {
-	args := []string{"build", "-t", cfg.Image}
+	ctxDir := cfg.Context
+	if ctxDir == "" {
+		ctxDir = "."
+	}
+
+	args := []string{"build"}
 	if cfg.Dockerfile != "" {
 		args = append(args, "-f", cfg.Dockerfile)
 	}
-	context := cfg.Context
-	if context == "" {
-		context = "."
-	}
-	args = append(args, context)
+	args = append(args, ctxDir)
 
-	a.logger.Info("building container image", "name", name, "image", cfg.Image)
-	_, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
-	return err
+	a.logger.Info("building container image", "name", name, "context", ctxDir)
+	out, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
+	if err != nil {
+		return fmt.Errorf("container build: %w: %s", err, string(out))
+	}
+	return nil
 }
 
 func (a *AppleRuntime) Exec(ctx context.Context, name string, command []string) ([]byte, error) {
@@ -84,54 +98,61 @@ func (a *AppleRuntime) Exec(ctx context.Context, name string, command []string) 
 	return a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
 }
 
+// listEntry matches the JSON output of `container list --format json`.
+type listEntry struct {
+	Configuration struct {
+		ID    string `json:"id"`
+		Image struct {
+			Reference string `json:"reference"`
+		} `json:"image"`
+	} `json:"configuration"`
+	Status string `json:"status"`
+}
+
 func (a *AppleRuntime) List(ctx context.Context) ([]ContainerInfo, error) {
-	out, err := a.runner.Run(ctx, a.binary, []string{"ps", "-a", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"}, runner.RunOpts{})
+	out, err := a.runner.Run(ctx, a.binary, []string{"list", "--all", "--format", "json"}, runner.RunOpts{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("container list: %w", err)
 	}
 
-	var containers []ContainerInfo
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 3 {
-			continue
-		}
-		state := "stopped"
-		if strings.Contains(strings.ToLower(parts[2]), "up") {
-			state = "running"
-		}
+	var entries []listEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
+		return nil, fmt.Errorf("parsing container list: %w", err)
+	}
+
+	containers := make([]ContainerInfo, 0, len(entries))
+	for _, e := range entries {
 		containers = append(containers, ContainerInfo{
-			Name:  parts[0],
-			Image: parts[1],
-			State: state,
+			Name:  e.Configuration.ID,
+			Image: e.Configuration.Image.Reference,
+			State: e.Status,
 		})
 	}
 	return containers, nil
 }
 
 func (a *AppleRuntime) Inspect(ctx context.Context, name string) (*ContainerInfo, error) {
-	containers, err := a.List(ctx)
+	out, err := a.runner.Run(ctx, a.binary, []string{"inspect", name, "--format", "json"}, runner.RunOpts{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("container inspect: %w: %s", err, string(out))
 	}
-	for _, c := range containers {
-		if c.Name == name {
-			return &c, nil
-		}
+
+	var entry listEntry
+	if err := json.Unmarshal(out, &entry); err != nil {
+		return nil, fmt.Errorf("parsing inspect: %w", err)
 	}
-	return nil, fmt.Errorf("container %q not found", name)
+	return &ContainerInfo{
+		Name:  entry.Configuration.ID,
+		Image: entry.Configuration.Image.Reference,
+		State: entry.Status,
+	}, nil
 }
 
 func (a *AppleRuntime) InjectDNS(cfg ContainerConfig, dnsIP string, dnsPort int) ContainerConfig {
-	if cfg.Env == nil {
-		cfg.Env = make(map[string]string)
-	}
-	cfg.Env["PLANE_DNS"] = fmt.Sprintf("%s:%d", dnsIP, dnsPort)
-	// Add DNS flag if supported by runtime
-	// This may need adjustment based on Apple Container CLI capabilities
+	// Apple Container CLI supports --dns flag natively.
+	// Store for use in Run(). The DNS IP is the host gateway.
+	a.dnsIP = dnsIP
+	a.dnsPort = dnsPort
 	return cfg
 }
 
