@@ -10,15 +10,15 @@ import (
 )
 
 const (
-	DaemonLabel = "com.plane.daemon"
-	MenuLabel   = "com.plane.menu"
+	DaemonLabel = "com.skiff.daemon"
+	MenuLabel   = "com.skiff.menu"
 	plistDir    = "Library/LaunchAgents"
 )
 
 // Keep backward compat
 const Label = DaemonLabel
 
-// LaunchAgent represents a launchd plist for a plane component.
+// LaunchAgent represents a launchd plist for a skiff component.
 type LaunchAgent struct {
 	Label                string            `plist:"Label"`
 	ProgramArguments     []string          `plist:"ProgramArguments"`
@@ -58,7 +58,7 @@ func defaultPath() string {
 	return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 }
 
-// Generate creates a launchd plist for the plane daemon.
+// Generate creates a launchd plist for the skiff daemon.
 func Generate(binaryPath, configPath, logsDir string) (*LaunchAgent, error) {
 	return &LaunchAgent{
 		Label:            DaemonLabel,
@@ -67,15 +67,15 @@ func Generate(binaryPath, configPath, logsDir string) (*LaunchAgent, error) {
 		EnvironmentVariables: map[string]string{
 			"PATH": defaultPath(),
 		},
-		StandardOutPath:   filepath.Join(logsDir, "plane-daemon.log"),
-		StandardErrorPath: filepath.Join(logsDir, "plane-daemon.err"),
+		StandardOutPath:   filepath.Join(logsDir, "skiff-daemon.log"),
+		StandardErrorPath: filepath.Join(logsDir, "skiff-daemon.err"),
 		KeepAlive:         true,
 		RunAtLoad:         true,
 		ThrottleInterval:  10,
 	}, nil
 }
 
-// GenerateMenu creates a launchd plist for the plane menu bar app.
+// GenerateMenu creates a launchd plist for the skiff menu bar app.
 func GenerateMenu(menuBinaryPath, socketPath, logsDir string) (*LaunchAgent, error) {
 	return &LaunchAgent{
 		Label:            MenuLabel,
@@ -83,8 +83,8 @@ func GenerateMenu(menuBinaryPath, socketPath, logsDir string) (*LaunchAgent, err
 		EnvironmentVariables: map[string]string{
 			"PLANE_SOCKET": socketPath,
 		},
-		StandardOutPath:   filepath.Join(logsDir, "plane-menu.log"),
-		StandardErrorPath: filepath.Join(logsDir, "plane-menu.err"),
+		StandardOutPath:   filepath.Join(logsDir, "skiff-menu.log"),
+		StandardErrorPath: filepath.Join(logsDir, "skiff-menu.err"),
 		KeepAlive:         true,
 		RunAtLoad:         true,
 	}, nil

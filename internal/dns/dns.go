@@ -34,7 +34,7 @@ func New(gateway net.IP, domain string, ttl uint32, logger *slog.Logger) *Servic
 	}
 }
 
-// SetUpstream sets the upstream DNS server for non-plane queries.
+// SetUpstream sets the upstream DNS server for non-skiff queries.
 func (d *ServiceDNS) SetUpstream(addr string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -129,7 +129,7 @@ func (d *ServiceDNS) extractServiceName(qname string) string {
 	// Remove trailing dot
 	name := strings.TrimSuffix(qname, ".")
 
-	// Match "db.plane.local" -> "db"
+	// Match "db.skiff.local" -> "db"
 	suffix := "." + d.domain
 	if strings.HasSuffix(name, suffix) {
 		return strings.TrimSuffix(name, suffix)

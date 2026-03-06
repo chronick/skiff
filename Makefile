@@ -3,16 +3,16 @@
 PREFIX ?= /usr/local
 
 build:
-	go build -o plane ./cmd/plane
-	go build -o plane-menu ./cmd/plane-menu
+	go build -o skiff ./cmd/skiff
+	go build -o skiff-menu ./cmd/skiff-menu
 
 install: build
 	install -d $(PREFIX)/bin
-	install -m 755 plane $(PREFIX)/bin/plane
-	install -m 755 plane-menu $(PREFIX)/bin/plane-menu
+	install -m 755 skiff $(PREFIX)/bin/skiff
+	install -m 755 skiff-menu $(PREFIX)/bin/skiff-menu
 
 uninstall:
-	rm -f $(PREFIX)/bin/plane $(PREFIX)/bin/plane-menu
+	rm -f $(PREFIX)/bin/skiff $(PREFIX)/bin/skiff-menu
 
 test:
 	go test ./...
@@ -26,4 +26,4 @@ test-cover-html: test-cover
 	open coverage.html
 
 clean:
-	rm -f plane plane-menu coverage.out coverage.html
+	rm -f skiff skiff-menu coverage.out coverage.html

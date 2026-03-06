@@ -8,7 +8,7 @@ import (
 
 func TestLoadValidConfig(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -51,7 +51,7 @@ schedules:
 
 func TestDefaults(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -73,8 +73,8 @@ services:
 	if cfg.DNS.Port != 15353 {
 		t.Errorf("expected default DNS port 15353, got %d", cfg.DNS.Port)
 	}
-	if cfg.DNS.Domain != "plane.local" {
-		t.Errorf("expected default DNS domain plane.local, got %s", cfg.DNS.Domain)
+	if cfg.DNS.Domain != "skiff.local" {
+		t.Errorf("expected default DNS domain skiff.local, got %s", cfg.DNS.Domain)
 	}
 
 	svc := cfg.Services["web"]
@@ -85,7 +85,7 @@ services:
 
 func TestInvalidVersion(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 2
 services:
@@ -101,7 +101,7 @@ services:
 
 func TestDuplicateNames(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -120,7 +120,7 @@ containers:
 
 func TestInvalidName(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -136,7 +136,7 @@ services:
 
 func TestDependencyCycleDetection(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -156,7 +156,7 @@ services:
 
 func TestCrossTypeDependency(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -194,7 +194,7 @@ containers:
 
 func TestUnknownDependency(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -211,7 +211,7 @@ services:
 
 func TestTCPWithoutAuthToken(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 daemon:
@@ -226,7 +226,7 @@ daemon:
 
 func TestVolumePathTraversal(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 containers:
@@ -244,7 +244,7 @@ containers:
 
 func TestEnvVarResolution(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	os.Setenv("TEST_PLANE_VAR", "resolved-value")
 	defer os.Unsetenv("TEST_PLANE_VAR")
@@ -269,7 +269,7 @@ services:
 
 func TestDotEnvFile(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 	envPath := filepath.Join(dir, ".env")
 
 	os.WriteFile(envPath, []byte("DOT_ENV_VAR=from-dotenv\n"), 0644)
@@ -294,7 +294,7 @@ services:
 
 func TestProcessEnvOverridesDotEnv(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 	envPath := filepath.Join(dir, ".env")
 
 	os.WriteFile(envPath, []byte("OVERRIDE_VAR=from-dotenv\n"), 0644)
@@ -338,7 +338,7 @@ func TestConfigHash(t *testing.T) {
 
 func TestHealthCheckValidation(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 services:
@@ -356,7 +356,7 @@ services:
 
 func TestScheduleRequiresInterval(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "plane.yml")
+	cfgPath := filepath.Join(dir, "skiff.yml")
 
 	content := `version: 1
 schedules:

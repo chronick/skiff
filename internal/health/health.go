@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/logbuf"
-	"github.com/chronick/plane/internal/runner"
-	"github.com/chronick/plane/internal/status"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/logbuf"
+	"github.com/chronick/skiff/internal/runner"
+	"github.com/chronick/skiff/internal/status"
 )
 
 // Checker runs periodic health checks for all configured resources.

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Client communicates with the plane daemon over a unix socket.
+// Client communicates with the skiff daemon over a unix socket.
 type Client struct {
 	socketPath string
 	http       *http.Client
@@ -80,7 +80,7 @@ type ActionResult struct {
 
 func DefaultSocketPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "platform", "plane.sock")
+	return filepath.Join(home, "platform", "skiff.sock")
 }
 
 func New(socketPath string) *Client {
@@ -107,7 +107,7 @@ func (c *Client) call(method, path string, body interface{}) ([]byte, error) {
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, "http://plane"+path, bodyReader)
+	req, err := http.NewRequest(method, "http://skiff"+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}

@@ -1,13 +1,13 @@
 version: 1
 
-# Test configuration for plane
+# Test configuration for skiff
 # Uses /tmp paths so tests don't touch real system state
 
 paths:
-  base: /tmp/plane-test
-  socket: /tmp/plane-test/plane.sock
-  logs: /tmp/plane-test/logs
-  state_file: /tmp/plane-test/plane-state.json
+  base: /tmp/skiff-test
+  socket: /tmp/skiff-test/skiff.sock
+  logs: /tmp/skiff-test/logs
+  state_file: /tmp/skiff-test/skiff-state.json
 
 daemon:
   status_poll_interval_secs: 30
@@ -18,22 +18,22 @@ daemon:
 dns:
   enabled: true
   port: 15353
-  domain: plane.local
+  domain: skiff.local
   ttl: 5
 
 # Native services
 services:
   # Simple echo service for testing
   echo-service:
-    command: ["/bin/echo", "hello from plane"]
-    working_dir: /tmp/plane-test
+    command: ["/bin/echo", "hello from skiff"]
+    working_dir: /tmp/skiff-test
     restart_policy: never
     log_file: echo.log
 
   # Long-running service for lifecycle testing
   sleep-service:
     command: ["/bin/sleep", "3600"]
-    working_dir: /tmp/plane-test
+    working_dir: /tmp/skiff-test
     restart_policy: always
     max_restarts: 3
     restart_backoff_secs: 2
@@ -58,7 +58,7 @@ schedules:
   # Ping monitor cronjob
   ping-monitor:
     command: ["ping", "-c", "1", "8.8.8.8"]
-    working_dir: /tmp/plane-test
+    working_dir: /tmp/skiff-test
     interval_seconds: 60
     timeout_secs: 10
     log_file: ping-monitor.log
@@ -66,7 +66,7 @@ schedules:
   # Periodic health report
   health-report:
     command: ["echo", "Health check passed"]
-    working_dir: /tmp/plane-test
+    working_dir: /tmp/skiff-test
     interval_seconds: 300
     timeout_secs: 5
     log_file: health-report.log

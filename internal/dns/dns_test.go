@@ -6,19 +6,19 @@ import (
 
 	mdns "github.com/miekg/dns"
 
-	"github.com/chronick/plane/internal/testutil"
+	"github.com/chronick/skiff/internal/testutil"
 )
 
 func newTestDNS() *ServiceDNS {
 	gateway := net.ParseIP("192.168.1.1")
-	return New(gateway, "plane.local", 30, testutil.NewTestLogger())
+	return New(gateway, "skiff.local", 30, testutil.NewTestLogger())
 }
 
 // --- extractServiceName ---
 
 func TestExtractServiceName_WithDomain(t *testing.T) {
 	d := newTestDNS()
-	got := d.extractServiceName("db.plane.local.")
+	got := d.extractServiceName("db.skiff.local.")
 	if got != "db" {
 		t.Errorf("expected 'db', got %q", got)
 	}
@@ -26,7 +26,7 @@ func TestExtractServiceName_WithDomain(t *testing.T) {
 
 func TestExtractServiceName_WithDomainNoDot(t *testing.T) {
 	d := newTestDNS()
-	got := d.extractServiceName("db.plane.local")
+	got := d.extractServiceName("db.skiff.local")
 	if got != "db" {
 		t.Errorf("expected 'db', got %q", got)
 	}
@@ -133,7 +133,7 @@ func TestHandleDNS_KnownRecord(t *testing.T) {
 	d.UpdateRecords([]string{"db"})
 
 	q := new(mdns.Msg)
-	q.SetQuestion("db.plane.local.", mdns.TypeA)
+	q.SetQuestion("db.skiff.local.", mdns.TypeA)
 
 	w := &mockResponseWriter{}
 	d.handleDNS(w, q)
@@ -164,7 +164,7 @@ func TestHandleDNS_UnknownRecord(t *testing.T) {
 	d.SetUpstream("127.0.0.1:1") // unreachable
 
 	q := new(mdns.Msg)
-	q.SetQuestion("unknown.plane.local.", mdns.TypeA)
+	q.SetQuestion("unknown.skiff.local.", mdns.TypeA)
 
 	w := &mockResponseWriter{}
 	d.handleDNS(w, q)
@@ -184,7 +184,7 @@ func TestHandleDNS_NonTypeA(t *testing.T) {
 	d.SetUpstream("127.0.0.1:1") // unreachable
 
 	q := new(mdns.Msg)
-	q.SetQuestion("db.plane.local.", mdns.TypeAAAA) // IPv6, not A
+	q.SetQuestion("db.skiff.local.", mdns.TypeAAAA) // IPv6, not A
 
 	w := &mockResponseWriter{}
 	d.handleDNS(w, q)

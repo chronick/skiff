@@ -8,7 +8,7 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/chronick/plane/internal/client"
+	"github.com/chronick/skiff/internal/client"
 )
 
 const maxResourceItems = 20
@@ -30,9 +30,9 @@ func main() {
 
 func onReady() {
 	systray.SetTitle("✈️")
-	systray.SetTooltip("plane - container orchestration")
+	systray.SetTooltip("skiff - container orchestration")
 
-	mStatus = systray.AddMenuItem("plane: connecting...", "Daemon status")
+	mStatus = systray.AddMenuItem("skiff: connecting...", "Daemon status")
 	mStatus.Disable()
 
 	systray.AddSeparator()
@@ -56,7 +56,7 @@ func onReady() {
 
 	systray.AddSeparator()
 
-	mQuit := systray.AddMenuItem("Quit", "Quit plane menu")
+	mQuit := systray.AddMenuItem("Quit", "Quit skiff menu")
 
 	go func() {
 		for {
@@ -80,9 +80,9 @@ func refreshLoop() {
 	for {
 		snap, err := cl.Status()
 		if err != nil {
-			mStatus.SetTitle("plane: disconnected")
+			mStatus.SetTitle("skiff: disconnected")
 			systray.SetTitle("✈️")
-			systray.SetTooltip("plane - disconnected")
+			systray.SetTooltip("skiff - disconnected")
 			for _, item := range resourceItems {
 				item.Hide()
 			}
@@ -100,12 +100,12 @@ func refreshLoop() {
 
 		if total > 0 {
 			systray.SetTitle(fmt.Sprintf("✈️ %d/%d", running, total))
-			mStatus.SetTitle(fmt.Sprintf("plane: %d/%d running", running, total))
+			mStatus.SetTitle(fmt.Sprintf("skiff: %d/%d running", running, total))
 		} else {
 			systray.SetTitle("✈️")
-			mStatus.SetTitle("plane: no resources")
+			mStatus.SetTitle("skiff: no resources")
 		}
-		systray.SetTooltip(fmt.Sprintf("plane - %d/%d resources running", running, total))
+		systray.SetTooltip(fmt.Sprintf("skiff - %d/%d resources running", running, total))
 
 		// Update resource items
 		for i := 0; i < maxResourceItems; i++ {
@@ -163,19 +163,19 @@ func scheduleIcon(result string) string {
 }
 
 func openTUI() {
-	// Find the plane binary
-	planePath, err := exec.LookPath("plane")
+	// Find the skiff binary
+	skiffPath, err := exec.LookPath("skiff")
 	if err != nil {
 		// Fallback: try same directory as this binary
 		if exePath, err := os.Executable(); err == nil {
-			planePath = exePath
+			skiffPath = exePath
 		}
 	}
 
 	script := fmt.Sprintf(`tell application "Terminal"
 	do script "%s tui"
 	activate
-end tell`, planePath)
+end tell`, skiffPath)
 	exec.Command("osascript", "-e", script).Run()
 }
 

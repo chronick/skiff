@@ -13,15 +13,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/dns"
-	"github.com/chronick/plane/internal/health"
-	"github.com/chronick/plane/internal/logbuf"
-	"github.com/chronick/plane/internal/runner"
-	"github.com/chronick/plane/internal/runtime"
-	"github.com/chronick/plane/internal/scheduler"
-	"github.com/chronick/plane/internal/status"
-	"github.com/chronick/plane/internal/supervisor"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/dns"
+	"github.com/chronick/skiff/internal/health"
+	"github.com/chronick/skiff/internal/logbuf"
+	"github.com/chronick/skiff/internal/runner"
+	"github.com/chronick/skiff/internal/runtime"
+	"github.com/chronick/skiff/internal/scheduler"
+	"github.com/chronick/skiff/internal/status"
+	"github.com/chronick/skiff/internal/supervisor"
 )
 
 // Daemon is the main control plane process.
@@ -134,7 +134,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer lock.Close()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return fmt.Errorf("another plane daemon is already running (could not acquire lock)")
+		return fmt.Errorf("another skiff daemon is already running (could not acquire lock)")
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 
@@ -214,7 +214,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}()
 	}
 
-	d.logger.Info("plane daemon started")
+	d.logger.Info("skiff daemon started")
 
 	// Wait for shutdown signal
 	<-sigCtx.Done()
@@ -340,7 +340,7 @@ func (d *Daemon) shutdown() error {
 	// Save state
 	_ = d.state.Save(d.cfg.Paths.StateFile)
 
-	d.logger.Info("plane daemon stopped")
+	d.logger.Info("skiff daemon stopped")
 	return nil
 }
 

@@ -1,4 +1,4 @@
-module github.com/chronick/plane
+module github.com/chronick/skiff
 
 go 1.25.0
 

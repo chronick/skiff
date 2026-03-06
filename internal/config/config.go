@@ -15,7 +15,7 @@ import (
 
 var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// Config is the top-level plane.yml structure.
+// Config is the top-level skiff.yml structure.
 type Config struct {
 	Version    int                        `yaml:"version"`
 	Paths      PathsConfig                `yaml:"paths"`
@@ -126,7 +126,7 @@ type ProxyRoute struct {
 	Port   int    `yaml:"port"`
 }
 
-// Load reads and parses a plane.yml file, resolving env vars and applying defaults.
+// Load reads and parses a skiff.yml file, resolving env vars and applying defaults.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -171,7 +171,7 @@ func applyDefaults(cfg *Config) {
 	cfg.Paths.Base = expandHome(cfg.Paths.Base)
 
 	if cfg.Paths.Socket == "" {
-		cfg.Paths.Socket = filepath.Join(cfg.Paths.Base, "plane.sock")
+		cfg.Paths.Socket = filepath.Join(cfg.Paths.Base, "skiff.sock")
 	} else {
 		cfg.Paths.Socket = expandHome(cfg.Paths.Socket)
 	}
@@ -181,7 +181,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Paths.Logs = expandHome(cfg.Paths.Logs)
 	}
 	if cfg.Paths.StateFile == "" {
-		cfg.Paths.StateFile = filepath.Join(cfg.Paths.Base, "plane-state.json")
+		cfg.Paths.StateFile = filepath.Join(cfg.Paths.Base, "skiff-state.json")
 	} else {
 		cfg.Paths.StateFile = expandHome(cfg.Paths.StateFile)
 	}
@@ -203,7 +203,7 @@ func applyDefaults(cfg *Config) {
 		cfg.DNS.Port = 15353
 	}
 	if cfg.DNS.Domain == "" {
-		cfg.DNS.Domain = "plane.local"
+		cfg.DNS.Domain = "skiff.local"
 	}
 	if cfg.DNS.TTL == 0 {
 		cfg.DNS.TTL = 5
@@ -298,8 +298,8 @@ func validate(cfg *Config) error {
 			if k == "" || v == "" {
 				return fmt.Errorf("container %q: label keys and values must not be empty", name)
 			}
-			if strings.HasPrefix(k, "plane.") {
-				return fmt.Errorf("container %q: label key %q is reserved (plane.* prefix)", name, k)
+			if strings.HasPrefix(k, "skiff.") {
+				return fmt.Errorf("container %q: label key %q is reserved (skiff.* prefix)", name, k)
 			}
 		}
 		if c.Network != "" && c.Network != "host" {

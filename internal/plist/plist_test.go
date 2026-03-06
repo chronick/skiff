@@ -6,13 +6,13 @@ import (
 )
 
 func TestLabel(t *testing.T) {
-	if Label != "com.plane.daemon" {
-		t.Errorf("expected label 'com.plane.daemon', got %q", Label)
+	if Label != "com.skiff.daemon" {
+		t.Errorf("expected label 'com.skiff.daemon', got %q", Label)
 	}
 }
 
 func TestGenerate(t *testing.T) {
-	p, err := Generate("/usr/local/bin/plane", "/etc/plane.yml", "/var/log/plane")
+	p, err := Generate("/usr/local/bin/skiff", "/etc/skiff.yml", "/var/log/skiff")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestGenerate(t *testing.T) {
 	if len(p.ProgramArguments) != 4 {
 		t.Errorf("expected 4 program arguments, got %d", len(p.ProgramArguments))
 	}
-	if p.ProgramArguments[0] != "/usr/local/bin/plane" {
+	if p.ProgramArguments[0] != "/usr/local/bin/skiff" {
 		t.Errorf("expected binary path, got %q", p.ProgramArguments[0])
 	}
 	if p.ProgramArguments[1] != "daemon" {
@@ -32,7 +32,7 @@ func TestGenerate(t *testing.T) {
 	if p.ProgramArguments[2] != "--config" {
 		t.Errorf("expected '--config' arg, got %q", p.ProgramArguments[2])
 	}
-	if p.ProgramArguments[3] != "/etc/plane.yml" {
+	if p.ProgramArguments[3] != "/etc/skiff.yml" {
 		t.Errorf("expected config path, got %q", p.ProgramArguments[3])
 	}
 	if !p.KeepAlive {
@@ -47,18 +47,18 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestGenerate_LogPaths(t *testing.T) {
-	p, _ := Generate("/bin/plane", "/cfg/plane.yml", "/var/log/plane")
+	p, _ := Generate("/bin/skiff", "/cfg/skiff.yml", "/var/log/skiff")
 
-	if !strings.HasPrefix(p.StandardOutPath, "/var/log/plane/") {
+	if !strings.HasPrefix(p.StandardOutPath, "/var/log/skiff/") {
 		t.Errorf("expected stdout path under logs dir, got %q", p.StandardOutPath)
 	}
-	if !strings.HasPrefix(p.StandardErrorPath, "/var/log/plane/") {
+	if !strings.HasPrefix(p.StandardErrorPath, "/var/log/skiff/") {
 		t.Errorf("expected stderr path under logs dir, got %q", p.StandardErrorPath)
 	}
 }
 
 func TestGenerate_WorkingDirectory(t *testing.T) {
-	p, _ := Generate("/bin/plane", "/home/user/project/plane.yml", "/var/log")
+	p, _ := Generate("/bin/skiff", "/home/user/project/skiff.yml", "/var/log")
 
 	if p.WorkingDirectory != "/home/user/project" {
 		t.Errorf("expected working dir to be config parent, got %q", p.WorkingDirectory)

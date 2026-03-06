@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chronick/plane/internal/runner"
+	"github.com/chronick/skiff/internal/runner"
 )
 
 // AppleRuntime implements ContainerRuntime using the Apple Container CLI
@@ -53,13 +53,13 @@ func (a *AppleRuntime) Run(ctx context.Context, name string, cfg ContainerConfig
 		args = append(args, "--dns", a.dnsIP)
 	}
 
-	// Labels: always inject plane system labels, then user labels
+	// Labels: always inject skiff system labels, then user labels
 	labels := map[string]string{
-		"plane.managed":  "true",
-		"plane.resource": name,
+		"skiff.managed":  "true",
+		"skiff.resource": name,
 	}
 	for k, v := range cfg.Labels {
-		if !strings.HasPrefix(k, "plane.") {
+		if !strings.HasPrefix(k, "skiff.") {
 			labels[k] = v
 		}
 	}

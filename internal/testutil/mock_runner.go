@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/chronick/plane/internal/runner"
+	"github.com/chronick/skiff/internal/runner"
 )
 
 // Call records a single invocation of the mock runner.

@@ -2,9 +2,9 @@ version: 1
 
 paths:
   base: ~/platform
-  socket: ~/platform/plane.sock
+  socket: ~/platform/skiff.sock
   logs: ~/platform/logs
-  state_file: ~/platform/plane-state.json
+  state_file: ~/platform/skiff-state.json
 
 daemon:
   status_poll_interval_secs: 5
@@ -18,7 +18,7 @@ daemon:
 dns:
   enabled: true
   port: 15353
-  domain: plane.local
+  domain: skiff.local
   ttl: 5
 
 # Native macOS services (managed as child processes)

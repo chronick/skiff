@@ -4,8 +4,8 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/chronick/plane/internal/logbuf"
-	"github.com/chronick/plane/internal/status"
+	"github.com/chronick/skiff/internal/logbuf"
+	"github.com/chronick/skiff/internal/status"
 )
 
 // NewTestLogger returns a silent logger for tests.

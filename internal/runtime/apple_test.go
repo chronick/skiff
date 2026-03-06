@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chronick/plane/internal/runtime"
-	"github.com/chronick/plane/internal/testutil"
+	"github.com/chronick/skiff/internal/runtime"
+	"github.com/chronick/skiff/internal/testutil"
 )
 
 func newTestRuntime() (*runtime.AppleRuntime, *testutil.MockProcessRunner) {
@@ -94,11 +94,11 @@ func TestRun_SystemLabels(t *testing.T) {
 	call, _ := runner.LastCall()
 	args := strings.Join(call.Args, " ")
 
-	if !strings.Contains(args, "--label plane.managed=true") {
-		t.Errorf("expected plane.managed label, got: %s", args)
+	if !strings.Contains(args, "--label skiff.managed=true") {
+		t.Errorf("expected skiff.managed label, got: %s", args)
 	}
-	if !strings.Contains(args, "--label plane.resource=db") {
-		t.Errorf("expected plane.resource label, got: %s", args)
+	if !strings.Contains(args, "--label skiff.resource=db") {
+		t.Errorf("expected skiff.resource label, got: %s", args)
 	}
 }
 
@@ -108,8 +108,8 @@ func TestRun_LabelFiltering(t *testing.T) {
 		Image: "test:v1",
 		Labels: map[string]string{
 			"app":           "myapp",
-			"plane.evil":    "shouldbe-excluded",
-			"plane.managed": "false", // should not override system label
+			"skiff.evil":    "shouldbe-excluded",
+			"skiff.managed": "false", // should not override system label
 		},
 	}
 	err := rt.Run(context.Background(), "test", cfg)
@@ -123,11 +123,11 @@ func TestRun_LabelFiltering(t *testing.T) {
 	if !strings.Contains(args, "--label app=myapp") {
 		t.Errorf("expected user label app=myapp, got: %s", args)
 	}
-	if strings.Contains(args, "plane.evil") {
-		t.Errorf("expected plane.evil to be filtered, got: %s", args)
+	if strings.Contains(args, "skiff.evil") {
+		t.Errorf("expected skiff.evil to be filtered, got: %s", args)
 	}
-	if !strings.Contains(args, "plane.managed=true") {
-		t.Errorf("expected plane.managed=true (system), got: %s", args)
+	if !strings.Contains(args, "skiff.managed=true") {
+		t.Errorf("expected skiff.managed=true (system), got: %s", args)
 	}
 }
 

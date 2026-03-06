@@ -1,6 +1,6 @@
 # Binaries (in root only)
-/plane
-/plane-menu
+/skiff
+/skiff-menu
 *.exe
 
 # Go
@@ -13,8 +13,8 @@ vendor/
 *.sock
 *.pid
 *.lock
-plane-state.json
-plane.yml
+skiff-state.json
+skiff.yml
 
 # Env files (may contain secrets)
 .env

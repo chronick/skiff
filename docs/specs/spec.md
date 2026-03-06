@@ -1,22 +1,22 @@
-# plane -- Container Orchestration for macOS
+# skiff -- Container Orchestration for macOS
 
 ## Overview
 
-plane is a lightweight container orchestration layer for macOS, built around
+skiff is a lightweight container orchestration layer for macOS, built around
 Apple Container Runtime. It sits between docker-compose (declarative but
 stateless) and Kubernetes (powerful but massive) -- offering health-aware
 lifecycle management, internal scheduling, service networking, and a
 programmatic control plane API, all from a single YAML file and binary.
 
-plane also manages native macOS services as child processes, making it a unified
+skiff also manages native macOS services as child processes, making it a unified
 control plane for everything running on a Mac: containers, daemons, and
 scheduled jobs.
 
-### What plane adds over docker-compose
+### What skiff adds over docker-compose
 
 - Health checks with auto-restart and configurable probes
 - Internal cron-like scheduler (no external cron/launchd plists needed)
-- Control plane API (unix socket or TCP) for programmatic access
+- Control skiff API (unix socket or TCP) for programmatic access
 - Embedded DNS for container-to-container service discovery
 - Service networking with port exposure and proxy routing
 - Startup dependency ordering with health-gated readiness
@@ -24,7 +24,7 @@ scheduled jobs.
 - Centralized log aggregation with in-memory ring buffers
 - Config drift detection and declarative reconciliation
 
-### What plane intentionally omits
+### What skiff intentionally omits
 
 - Multi-node clustering and scheduling
 - Horizontal scaling / replicas
@@ -32,7 +32,7 @@ scheduled jobs.
 - Custom resource definitions
 - RBAC and multi-tenant isolation
 
-plane is for a single machine running many services.
+skiff is for a single machine running many services.
 
 ## Tech Stack
 
@@ -64,7 +64,7 @@ plane is for a single machine running many services.
 
 The daemon owns all native services as child processes via `os/exec`.
 There are NO per-service launchd plists. launchd is only used for the
-daemon itself (`plane install`).
+daemon itself (`skiff install`).
 
 If the daemon dies, native services die. launchd restarts daemon (KeepAlive),
 daemon restarts services on startup (clean slate recovery).
@@ -102,16 +102,16 @@ Standard Go patterns:
 
 SharedState is sync.RWMutex-protected.
 
-## Configuration (plane.yml)
+## Configuration (skiff.yml)
 
 ```yaml
 version: 1
 
 paths:
   base: ~/platform
-  socket: ~/platform/plane.sock
+  socket: ~/platform/skiff.sock
   logs: ~/platform/logs
-  state_file: ~/platform/plane-state.json
+  state_file: ~/platform/skiff-state.json
 
 daemon:
   status_poll_interval_secs: 5
@@ -124,7 +124,7 @@ daemon:
 dns:
   enabled: true
   port: 15353
-  domain: plane.local
+  domain: skiff.local
   ttl: 5
 
 services:
@@ -183,7 +183,7 @@ proxy:
 ### Environment Variables
 
 - `${VAR}` syntax resolved from process environment
-- `.env` file in same directory as plane.yml loaded as fallback
+- `.env` file in same directory as skiff.yml loaded as fallback
 - Process env vars take precedence over .env values
 - `.env` is optional (missing file is not an error)
 
@@ -191,27 +191,27 @@ proxy:
 
 | Command | Description |
 |---------|-------------|
-| `plane up [name...]` | Idempotent: start missing, restart changed, leave running |
-| `plane up --build [name...]` | Build images first, then start |
-| `plane down [name...]` | Stop + remove containers. Native services just stop |
-| `plane down --volumes` | Also remove container volumes |
-| `plane stop [name...]` | Graceful stop (SIGTERM). Containers preserved |
-| `plane kill [name...]` | Force stop (SIGKILL) |
-| `plane ps [--json]` | Primary status command |
-| `plane status [--json]` | Alias for ps |
-| `plane apply [--dry-run]` | Reconcile: like up + remove orphans |
-| `plane restart <name>` | Restart a single resource |
-| `plane build [name...]` | Build container images |
-| `plane run <name> [-- args...]` | Ephemeral container (synchronous) |
-| `plane exec <name> -- <cmd>` | Exec in running container |
-| `plane logs <name> [-f] [-n N]` | Tail logs |
-| `plane config` | Validate + print resolved config |
-| `plane config --validate-only` | Exit 0 if valid, 1 if invalid |
-| `plane daemon [-d]` | Start control plane |
-| `plane install` | Install daemon as launchd agent |
-| `plane uninstall` | Remove daemon from launchd |
-| `plane run-now <name>` | Trigger scheduled job |
-| `plane init` | Generate starter config |
+| `skiff up [name...]` | Idempotent: start missing, restart changed, leave running |
+| `skiff up --build [name...]` | Build images first, then start |
+| `skiff down [name...]` | Stop + remove containers. Native services just stop |
+| `skiff down --volumes` | Also remove container volumes |
+| `skiff stop [name...]` | Graceful stop (SIGTERM). Containers preserved |
+| `skiff kill [name...]` | Force stop (SIGKILL) |
+| `skiff ps [--json]` | Primary status command |
+| `skiff status [--json]` | Alias for ps |
+| `skiff apply [--dry-run]` | Reconcile: like up + remove orphans |
+| `skiff restart <name>` | Restart a single resource |
+| `skiff build [name...]` | Build container images |
+| `skiff run <name> [-- args...]` | Ephemeral container (synchronous) |
+| `skiff exec <name> -- <cmd>` | Exec in running container |
+| `skiff logs <name> [-f] [-n N]` | Tail logs |
+| `skiff config` | Validate + print resolved config |
+| `skiff config --validate-only` | Exit 0 if valid, 1 if invalid |
+| `skiff daemon [-d]` | Start control plane |
+| `skiff install` | Install daemon as launchd agent |
+| `skiff uninstall` | Remove daemon from launchd |
+| `skiff run-now <name>` | Trigger scheduled job |
+| `skiff init` | Generate starter config |
 
 ### Key Semantics
 
@@ -222,7 +222,7 @@ proxy:
 - `kill` = SIGKILL (emergency stop)
 - `ps` is primary, `status` is alias
 
-## Control Plane API
+## Control Skiff API
 
 Unix socket (file perms auth) + optional TCP (bearer token auth).
 All routes return JSON, prefixed with `/v1/`.
@@ -306,9 +306,9 @@ On SIGTERM/SIGINT:
 ## Project Layout
 
 ```
-cmd/plane/main.go          -- CLI entrypoint (cobra)
+cmd/skiff/main.go          -- CLI entrypoint (cobra)
 internal/
-  config/config.go         -- plane.yml parsing, validation, env resolution
+  config/config.go         -- skiff.yml parsing, validation, env resolution
   daemon/daemon.go         -- HTTP server, lifecycle orchestration
   daemon/routes.go         -- API route handlers
   daemon/proxy.go          -- reverse proxy
@@ -322,7 +322,7 @@ internal/
   status/status.go         -- SharedState + status types
   logbuf/logbuf.go         -- ring buffer log aggregation
   runner/runner.go         -- ProcessRunner interface
-config/plane.example.yml   -- annotated example config
+config/skiff.example.yml   -- annotated example config
 docs/specs/spec.md         -- this file
 ```
 

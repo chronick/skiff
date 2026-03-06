@@ -21,10 +21,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/daemon"
-	"github.com/chronick/plane/internal/plist"
-	"github.com/chronick/plane/internal/tui"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/daemon"
+	"github.com/chronick/skiff/internal/plist"
+	"github.com/chronick/skiff/internal/tui"
 )
 
 var (
@@ -37,9 +37,9 @@ var (
 
 func main() {
 	root := &cobra.Command{
-		Use:   "plane",
+		Use:   "skiff",
 		Short: "Container orchestration for macOS",
-		Long:  "plane is a lightweight container orchestration layer for macOS with health-aware lifecycle management, scheduling, and service discovery.",
+		Long:  "skiff is a lightweight container orchestration layer for macOS with health-aware lifecycle management, scheduling, and service discovery.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if configPath == "" {
 				configPath = findConfig()
@@ -49,7 +49,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to config file (default: ./plane.yml, ~/.config/plane/config.yml)")
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to config file (default: ./skiff.yml, ~/.config/skiff/config.yml)")
 
 	root.AddCommand(
 		daemonCmd(),
@@ -84,7 +84,7 @@ func daemonCmd() *cobra.Command {
 	var daemonize bool
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Start the plane daemon",
+		Short: "Start the skiff daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -585,7 +585,7 @@ func runNowCmd() *cobra.Command {
 func installCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install plane daemon and menu bar app as launchd agents",
+		Short: "Install skiff daemon and menu bar app as launchd agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -619,7 +619,7 @@ func installCmd() *cobra.Command {
 			green.Printf("  Installed daemon: %s\n", daemonPath)
 
 			// Install menu bar agent
-			menuBinary := filepath.Join(filepath.Dir(binaryPath), "plane-menu")
+			menuBinary := filepath.Join(filepath.Dir(binaryPath), "skiff-menu")
 			if _, err := os.Stat(menuBinary); err == nil {
 				menuAgent, err := plist.GenerateMenu(menuBinary, cfg.Paths.Socket, cfg.Paths.Logs)
 				if err != nil {
@@ -631,10 +631,10 @@ func installCmd() *cobra.Command {
 				menuPath, _ := plist.MenuPlistPath()
 				green.Printf("  Installed menu:   %s\n", menuPath)
 			} else {
-				yellow.Println("  Skipped menu bar app (plane-menu not found next to plane binary)")
+				yellow.Println("  Skipped menu bar app (skiff-menu not found next to skiff binary)")
 			}
 
-			green.Println("  Loaded into launchd — plane starts on login")
+			green.Println("  Loaded into launchd — skiff starts on login")
 			return nil
 		},
 	}
@@ -643,18 +643,18 @@ func installCmd() *cobra.Command {
 func uninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove plane daemon and menu bar app from launchd",
+		Short: "Remove skiff daemon and menu bar app from launchd",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := plist.UnloadAgent(plist.MenuLabel); err != nil {
 				yellow.Printf("  Warning: %v\n", err)
 			} else if plist.MenuExists() {
-				green.Println("  Uninstalled plane menu bar app")
+				green.Println("  Uninstalled skiff menu bar app")
 			}
 
 			if err := plist.UnloadAgent(plist.DaemonLabel); err != nil {
 				return err
 			}
-			green.Println("  Uninstalled plane daemon")
+			green.Println("  Uninstalled skiff daemon")
 			green.Println("  Removed from launchd")
 			return nil
 		},
@@ -692,19 +692,19 @@ func configCmd() *cobra.Command {
 func initCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Generate a starter plane.yml",
+		Short: "Generate a starter skiff.yml",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := os.Stat("plane.yml"); err == nil {
-				return fmt.Errorf("plane.yml already exists")
+			if _, err := os.Stat("skiff.yml"); err == nil {
+				return fmt.Errorf("skiff.yml already exists")
 			}
 
 			starter := `version: 1
 
 paths:
   base: ~/platform
-  socket: ~/platform/plane.sock
+  socket: ~/platform/skiff.sock
   logs: ~/platform/logs
-  state_file: ~/platform/plane-state.json
+  state_file: ~/platform/skiff-state.json
 
 daemon:
   status_poll_interval_secs: 5
@@ -715,7 +715,7 @@ daemon:
 dns:
   enabled: true
   port: 15353
-  domain: plane.local
+  domain: skiff.local
   ttl: 5
 
 services: {}
@@ -724,10 +724,10 @@ containers: {}
 
 schedules: {}
 `
-			if err := os.WriteFile("plane.yml", []byte(starter), 0644); err != nil {
+			if err := os.WriteFile("skiff.yml", []byte(starter), 0644); err != nil {
 				return err
 			}
-			green.Println("  Created plane.yml")
+			green.Println("  Created skiff.yml")
 			return nil
 		},
 	}
@@ -748,8 +748,8 @@ func tuiCmd() *cobra.Command {
 
 func findConfig() string {
 	candidates := []string{
-		"plane.yml",
-		"config/plane.yml",
+		"skiff.yml",
+		"config/skiff.yml",
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {
@@ -759,17 +759,17 @@ func findConfig() string {
 	// Check XDG-style config directory
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		xdg := filepath.Join(home, ".config", "plane", "config.yml")
+		xdg := filepath.Join(home, ".config", "skiff", "config.yml")
 		if _, err := os.Stat(xdg); err == nil {
 			return xdg
 		}
 		// Legacy location
-		p := filepath.Join(home, "platform", "plane.yml")
+		p := filepath.Join(home, "platform", "skiff.yml")
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
-	return "plane.yml"
+	return "skiff.yml"
 }
 
 func socketPath() string {
@@ -781,7 +781,7 @@ func socketPath() string {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "platform", "plane.sock")
+	return filepath.Join(home, "platform", "skiff.sock")
 }
 
 func apiCall(method, path string, body interface{}) ([]byte, error) {
@@ -805,7 +805,7 @@ func apiCall(method, path string, body interface{}) ([]byte, error) {
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, "http://plane"+path, bodyReader)
+	req, err := http.NewRequest(method, "http://skiff"+path, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -815,7 +815,7 @@ func apiCall(method, path string, body interface{}) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot connect to plane daemon (is it running?): %w", err)
+		return nil, fmt.Errorf("cannot connect to skiff daemon (is it running?): %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -839,7 +839,7 @@ func ensureDaemon() {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "Starting plane daemon...")
+	fmt.Fprintln(os.Stderr, "Starting skiff daemon...")
 
 	exePath, _ := os.Executable()
 	args := []string{"daemon", "-d"}
@@ -883,11 +883,11 @@ func daemonizeProcess(cfg *config.Config) error {
 		return fmt.Errorf("daemonizing: %w", err)
 	}
 
-	pidFile := filepath.Join(cfg.Paths.Base, "plane.pid")
+	pidFile := filepath.Join(cfg.Paths.Base, "skiff.pid")
 	os.MkdirAll(filepath.Dir(pidFile), 0755)
 	os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
 
-	fmt.Printf("plane daemon started (pid %d)\n", cmd.Process.Pid)
+	fmt.Printf("skiff daemon started (pid %d)\n", cmd.Process.Pid)
 	return nil
 }
 

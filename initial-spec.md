@@ -16,7 +16,7 @@ scheduled jobs.
 
 - Health checks with auto-restart and configurable probes
 - Internal cron-like scheduler (no external cron/launchd plists needed)
-- Control plane API (unix socket or TCP) for programmatic access
+- Control skiff API (unix socket or TCP) for programmatic access
 - Embedded DNS for container-to-container service discovery
 - Service networking with port exposure and proxy routing
 - Startup dependency ordering with health-gated readiness
@@ -417,7 +417,7 @@ plat down web-app            # stop just this one
 plat build renderer          # build one image
 ```
 
-## Control Plane API
+## Control Skiff API
 
 The daemon exposes two listeners:
 
@@ -603,7 +603,7 @@ served on the TCP listener (not the unix socket control API).
 | Container -> Container | Embedded DNS resolves name to host gateway, port mapping routes to target |
 | Container -> Native service | Same: DNS + host port |
 | External client -> Service | TCP listener reverse proxy, or direct host port |
-| CLI / local tool -> Control plane | Unix socket or TCP with bearer token |
+| CLI / local tool -> Control skiff | Unix socket or TCP with bearer token |
 
 ## Dependency Ordering
 

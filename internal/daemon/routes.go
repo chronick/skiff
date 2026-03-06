@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/status"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/status"
 )
 
 func (d *Daemon) setupRoutes() *http.ServeMux {

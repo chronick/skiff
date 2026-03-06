@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/health"
-	"github.com/chronick/plane/internal/logbuf"
-	"github.com/chronick/plane/internal/runner"
-	"github.com/chronick/plane/internal/scheduler"
-	"github.com/chronick/plane/internal/status"
-	"github.com/chronick/plane/internal/supervisor"
-	"github.com/chronick/plane/internal/testutil"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/health"
+	"github.com/chronick/skiff/internal/logbuf"
+	"github.com/chronick/skiff/internal/runner"
+	"github.com/chronick/skiff/internal/scheduler"
+	"github.com/chronick/skiff/internal/status"
+	"github.com/chronick/skiff/internal/supervisor"
+	"github.com/chronick/skiff/internal/testutil"
 )
 
 // newTestDaemon creates a Daemon wired with mocks for route testing.
@@ -24,9 +24,9 @@ func newTestDaemon(cfg *config.Config) (*Daemon, *testutil.MockContainerRuntime)
 		cfg = &config.Config{
 			Version: 1,
 			Paths: config.PathsConfig{
-				Base:   "/tmp/plane-test",
-				Socket: "/tmp/plane-test.sock",
-				Logs:   "/tmp/plane-test-logs",
+				Base:   "/tmp/skiff-test",
+				Socket: "/tmp/skiff-test.sock",
+				Logs:   "/tmp/skiff-test-logs",
 			},
 			Daemon: config.DaemonConfig{
 				LogBufferLines:         100,
@@ -42,7 +42,7 @@ func newTestDaemon(cfg *config.Config) (*Daemon, *testutil.MockContainerRuntime)
 	mockRT := testutil.NewMockRuntime()
 	r := &runner.ExecRunner{}
 	sup := supervisor.New(state, logs, cfg.Paths.Logs, logger)
-	sched := scheduler.New(state, logs, "/tmp/plane-test-sched.json", logger)
+	sched := scheduler.New(state, logs, "/tmp/skiff-test-sched.json", logger)
 	hc := health.NewChecker(state, logs, r, logger)
 
 	d := &Daemon{

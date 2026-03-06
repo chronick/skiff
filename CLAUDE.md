@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**plane** -- Container orchestration for macOS. Single binary, single YAML config.
+**skiff** -- Container orchestration for macOS. Single binary, single YAML config.
 
 ## Tech Stack
 
@@ -13,22 +13,22 @@
 ## Commands
 
 ```bash
-go build -o plane ./cmd/plane    # build
+go build -o skiff ./cmd/skiff    # build
 go test ./...                     # test all packages
 go build ./...                    # check compilation
-./plane init                      # generate starter config
-./plane daemon                    # start daemon (foreground)
-./plane daemon -d                 # start daemon (background)
-./plane up                        # start all resources
-./plane ps                        # status table
-./plane apply --dry-run           # preview changes
-./plane config --validate-only    # validate config (CI)
+./skiff init                      # generate starter config
+./skiff daemon                    # start daemon (foreground)
+./skiff daemon -d                 # start daemon (background)
+./skiff up                        # start all resources
+./skiff ps                        # status table
+./skiff apply --dry-run           # preview changes
+./skiff config --validate-only    # validate config (CI)
 ```
 
 ## Architecture
 
-- `cmd/plane/main.go` -- cobra CLI, talks to daemon via unix socket
-- `internal/config/` -- plane.yml parsing, validation, env resolution, .env support
+- `cmd/skiff/main.go` -- cobra CLI, talks to daemon via unix socket
+- `internal/config/` -- skiff.yml parsing, validation, env resolution, .env support
 - `internal/daemon/` -- HTTP server (unix socket + TCP), API routes, reverse proxy
 - `internal/supervisor/` -- native service process management (spawn, signal, restart)
 - `internal/runtime/` -- ContainerRuntime interface + Apple implementation
@@ -37,7 +37,7 @@ go build ./...                    # check compilation
 - `internal/status/` -- SharedState (sync.RWMutex-protected)
 - `internal/dns/` -- embedded DNS for service discovery
 - `internal/logbuf/` -- ring buffer log aggregation
-- `internal/plist/` -- daemon-only launchd plist (plane install/uninstall)
+- `internal/plist/` -- daemon-only launchd plist (skiff install/uninstall)
 - `internal/runner/` -- ProcessRunner interface for testability
 
 ## Key Design Decisions

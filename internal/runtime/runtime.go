@@ -16,7 +16,7 @@ type ContainerRuntime interface {
 	List(ctx context.Context) ([]ContainerInfo, error)
 	// Inspect returns details for a single container.
 	Inspect(ctx context.Context, name string) (*ContainerInfo, error)
-	// InjectDNS modifies a container config to use the plane DNS server.
+	// InjectDNS modifies a container config to use the skiff DNS server.
 	InjectDNS(cfg ContainerConfig, dnsIP string, dnsPort int) ContainerConfig
 	// SetLimits applies resource limits to a container config.
 	SetLimits(cfg ContainerConfig, limits ResourceLimits) ContainerConfig

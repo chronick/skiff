@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/chronick/plane/internal/runtime"
+	"github.com/chronick/skiff/internal/runtime"
 )
 
 // RuntimeCall records a single invocation on the mock runtime.

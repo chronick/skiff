@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/plane/internal/config"
-	"github.com/chronick/plane/internal/status"
-	"github.com/chronick/plane/internal/testutil"
+	"github.com/chronick/skiff/internal/config"
+	"github.com/chronick/skiff/internal/status"
+	"github.com/chronick/skiff/internal/testutil"
 )
 
 func intPtr(v int) *int { return &v }
@@ -221,7 +221,7 @@ func TestStatePersistence_SaveLoad(t *testing.T) {
 }
 
 func TestStatePersistence_MissingFile(t *testing.T) {
-	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "/tmp/nonexistent-plane-test.json", testutil.NewTestLogger())
+	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "/tmp/nonexistent-skiff-test.json", testutil.NewTestLogger())
 	result := s.loadState()
 	if len(result) != 0 {
 		t.Errorf("expected empty result for missing file, got %d entries", len(result))
