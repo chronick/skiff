@@ -1,5 +1,6 @@
-# Binary
-plane
+# Binaries (in root only)
+/plane
+/plane-menu
 *.exe
 
 # Go
@@ -13,6 +14,7 @@ vendor/
 *.pid
 *.lock
 plane-state.json
+plane.yml
 
 # Env files (may contain secrets)
 .env
