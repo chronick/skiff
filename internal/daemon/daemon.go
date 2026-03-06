@@ -41,6 +41,14 @@ type Daemon struct {
 
 	logOffsetsMu sync.Mutex
 	logOffsets   map[string]int // tracks last-seen log line count per container
+
+	prevStatsMu sync.Mutex
+	prevStats   map[string]prevStatsSample // previous stats sample for CPU% calculation
+}
+
+type prevStatsSample struct {
+	cpuUsageUsec int64
+	time         time.Time
 }
 
 // New creates a Daemon from config.
@@ -73,6 +81,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 		runner:     r,
 		logger:     logger,
 		logOffsets: make(map[string]int),
+		prevStats:  make(map[string]prevStatsSample),
 	}
 
 	// Wire up health check auto-restart callback
@@ -375,6 +384,7 @@ func (d *Daemon) statsPoller(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			now := time.Now()
 			for name := range d.cfg.Containers {
 				rs, ok := d.state.GetResource(name)
 				if !ok || rs.State != status.StateRunning {
@@ -385,7 +395,25 @@ func (d *Daemon) statsPoller(ctx context.Context) {
 					d.logger.Debug("stats poll failed", "name", name, "error", err)
 					continue
 				}
-				// Update stats on the resource in state
+
+				// Compute CPU% from delta between samples
+				d.prevStatsMu.Lock()
+				prev, hasPrev := d.prevStats[name]
+				d.prevStats[name] = prevStatsSample{
+					cpuUsageUsec: stats.CPUUsageUsec,
+					time:         now,
+				}
+				d.prevStatsMu.Unlock()
+
+				if hasPrev {
+					cpuDelta := stats.CPUUsageUsec - prev.cpuUsageUsec
+					timeDelta := now.Sub(prev.time)
+					if timeDelta > 0 && cpuDelta >= 0 {
+						// cpuDelta is in microseconds, timeDelta in microseconds
+						stats.CPUPercent = float64(cpuDelta) / float64(timeDelta.Microseconds()) * 100.0
+					}
+				}
+
 				d.state.UpdateStats(name, stats)
 			}
 		}

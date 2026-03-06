@@ -62,10 +62,11 @@ type ResourceLimits struct {
 
 // ContainerStats holds live container metrics.
 type ContainerStats struct {
-	CPUPercent float64 `json:"cpu_percent"`
-	MemUsageMB int64   `json:"mem_usage_mb"`
-	MemLimitMB int64   `json:"mem_limit_mb"`
-	PIDs       int     `json:"pids"`
+	CPUPercent   float64 `json:"cpu_percent"`
+	CPUUsageUsec int64   `json:"-"` // raw sample, not serialized to JSON
+	MemUsageMB   int64   `json:"mem_usage_mb"`
+	MemLimitMB   int64   `json:"mem_limit_mb"`
+	PIDs         int     `json:"pids"`
 }
 
 // NetworkConfig holds network creation parameters.

@@ -201,10 +201,11 @@ func (a *AppleRuntime) SetLimits(cfg ContainerConfig, limits ResourceLimits) Con
 
 // statsEntry matches the JSON output of `container stats --format json --no-stream`.
 type statsEntry struct {
-	CPUPercentage    float64 `json:"cpu_percentage"`
-	MemoryUsage      int64   `json:"memory_usage"`
-	MemoryLimit      int64   `json:"memory_limit"`
-	PIDs             int     `json:"pids"`
+	ID               string `json:"id"`
+	CPUUsageUsec     int64  `json:"cpuUsageUsec"`
+	MemoryUsageBytes int64  `json:"memoryUsageBytes"`
+	MemoryLimitBytes int64  `json:"memoryLimitBytes"`
+	NumProcesses     int    `json:"numProcesses"`
 }
 
 func (a *AppleRuntime) Stats(ctx context.Context, name string) (*ContainerStats, error) {
@@ -213,16 +214,20 @@ func (a *AppleRuntime) Stats(ctx context.Context, name string) (*ContainerStats,
 		return nil, fmt.Errorf("container stats: %w: %s", err, string(out))
 	}
 
-	var entry statsEntry
-	if err := json.Unmarshal(out, &entry); err != nil {
+	var entries []statsEntry
+	if err := json.Unmarshal(out, &entries); err != nil {
 		return nil, fmt.Errorf("parsing stats: %w", err)
 	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no stats returned for %s", name)
+	}
+	entry := entries[0]
 
 	return &ContainerStats{
-		CPUPercent: entry.CPUPercentage,
-		MemUsageMB: entry.MemoryUsage / (1024 * 1024),
-		MemLimitMB: entry.MemoryLimit / (1024 * 1024),
-		PIDs:       entry.PIDs,
+		CPUUsageUsec: entry.CPUUsageUsec,
+		MemUsageMB:   entry.MemoryUsageBytes / (1024 * 1024),
+		MemLimitMB:   entry.MemoryLimitBytes / (1024 * 1024),
+		PIDs:         entry.NumProcesses,
 	}, nil
 }
 
