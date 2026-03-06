@@ -4,13 +4,15 @@ PREFIX ?= /usr/local
 
 build:
 	go build -o plane ./cmd/plane
+	go build -o plane-menu ./cmd/plane-menu
 
 install: build
 	install -d $(PREFIX)/bin
 	install -m 755 plane $(PREFIX)/bin/plane
+	install -m 755 plane-menu $(PREFIX)/bin/plane-menu
 
 uninstall:
-	rm -f $(PREFIX)/bin/plane
+	rm -f $(PREFIX)/bin/plane $(PREFIX)/bin/plane-menu
 
 test:
 	go test ./...
@@ -24,4 +26,4 @@ test-cover-html: test-cover
 	open coverage.html
 
 clean:
-	rm -f plane coverage.out coverage.html
+	rm -f plane plane-menu coverage.out coverage.html

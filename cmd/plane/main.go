@@ -585,7 +585,7 @@ func runNowCmd() *cobra.Command {
 func installCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install plane daemon as launchd agent",
+		Short: "Install plane daemon and menu bar app as launchd agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -602,18 +602,39 @@ func installCmd() *cobra.Command {
 				return err
 			}
 
-			p, err := plist.Generate(binaryPath, absConfig, cfg.Paths.Logs)
+			// Ensure logs directory exists
+			if err := os.MkdirAll(cfg.Paths.Logs, 0755); err != nil {
+				return fmt.Errorf("creating logs dir: %w", err)
+			}
+
+			// Install daemon agent
+			daemonAgent, err := plist.Generate(binaryPath, absConfig, cfg.Paths.Logs)
 			if err != nil {
 				return err
 			}
-
-			if err := plist.Install(p); err != nil {
+			if err := plist.InstallAgent(daemonAgent); err != nil {
 				return err
 			}
+			daemonPath, _ := plist.PlistPath()
+			green.Printf("  Installed daemon: %s\n", daemonPath)
 
-			plistPath, _ := plist.PlistPath()
-			green.Printf("  Installed: %s\n", plistPath)
-			fmt.Println("  Run: launchctl load " + plistPath)
+			// Install menu bar agent
+			menuBinary := filepath.Join(filepath.Dir(binaryPath), "plane-menu")
+			if _, err := os.Stat(menuBinary); err == nil {
+				menuAgent, err := plist.GenerateMenu(menuBinary, cfg.Paths.Socket, cfg.Paths.Logs)
+				if err != nil {
+					return err
+				}
+				if err := plist.InstallAgent(menuAgent); err != nil {
+					return fmt.Errorf("installing menu agent: %w", err)
+				}
+				menuPath, _ := plist.MenuPlistPath()
+				green.Printf("  Installed menu:   %s\n", menuPath)
+			} else {
+				yellow.Println("  Skipped menu bar app (plane-menu not found next to plane binary)")
+			}
+
+			green.Println("  Loaded into launchd — plane starts on login")
 			return nil
 		},
 	}
@@ -622,16 +643,19 @@ func installCmd() *cobra.Command {
 func uninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove plane daemon from launchd",
+		Short: "Remove plane daemon and menu bar app from launchd",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			plistPath, _ := plist.PlistPath()
-			if plist.Exists() {
-				fmt.Println("  Run first: launchctl unload " + plistPath)
+			if err := plist.UnloadAgent(plist.MenuLabel); err != nil {
+				yellow.Printf("  Warning: %v\n", err)
+			} else if plist.MenuExists() {
+				green.Println("  Uninstalled plane menu bar app")
 			}
-			if err := plist.Uninstall(); err != nil {
+
+			if err := plist.UnloadAgent(plist.DaemonLabel); err != nil {
 				return err
 			}
 			green.Println("  Uninstalled plane daemon")
+			green.Println("  Removed from launchd")
 			return nil
 		},
 	}

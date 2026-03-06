@@ -3,65 +3,105 @@ package plist
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"howett.net/plist"
 )
 
 const (
-	Label    = "com.plane.daemon"
-	plistDir = "Library/LaunchAgents"
+	DaemonLabel = "com.plane.daemon"
+	MenuLabel   = "com.plane.menu"
+	plistDir    = "Library/LaunchAgents"
 )
 
-// DaemonPlist represents the launchd plist for the plane daemon.
-type DaemonPlist struct {
+// Keep backward compat
+const Label = DaemonLabel
+
+// LaunchAgent represents a launchd plist for a plane component.
+type LaunchAgent struct {
 	Label                string            `plist:"Label"`
 	ProgramArguments     []string          `plist:"ProgramArguments"`
-	WorkingDirectory     string            `plist:"WorkingDirectory"`
+	WorkingDirectory     string            `plist:"WorkingDirectory,omitempty"`
 	EnvironmentVariables map[string]string `plist:"EnvironmentVariables,omitempty"`
 	StandardOutPath      string            `plist:"StandardOutPath"`
 	StandardErrorPath    string            `plist:"StandardErrorPath"`
 	KeepAlive            bool              `plist:"KeepAlive"`
 	RunAtLoad            bool              `plist:"RunAtLoad"`
-	ThrottleInterval     int               `plist:"ThrottleInterval"`
+	ThrottleInterval     int               `plist:"ThrottleInterval,omitempty"`
 }
 
-// PlistPath returns the full path to the daemon plist file.
-func PlistPath() (string, error) {
+// DaemonPlist is an alias for backward compatibility.
+type DaemonPlist = LaunchAgent
+
+// AgentPath returns the full path to a plist file for the given label.
+func AgentPath(label string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("getting home dir: %w", err)
 	}
-	return filepath.Join(home, plistDir, Label+".plist"), nil
+	return filepath.Join(home, plistDir, label+".plist"), nil
+}
+
+// PlistPath returns the full path to the daemon plist file.
+func PlistPath() (string, error) {
+	return AgentPath(DaemonLabel)
+}
+
+// MenuPlistPath returns the full path to the menu bar plist file.
+func MenuPlistPath() (string, error) {
+	return AgentPath(MenuLabel)
+}
+
+// defaultPath returns a PATH that includes common binary locations.
+func defaultPath() string {
+	return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 }
 
 // Generate creates a launchd plist for the plane daemon.
-func Generate(binaryPath, configPath, logsDir string) (*DaemonPlist, error) {
-	return &DaemonPlist{
-		Label:            Label,
+func Generate(binaryPath, configPath, logsDir string) (*LaunchAgent, error) {
+	return &LaunchAgent{
+		Label:            DaemonLabel,
 		ProgramArguments: []string{binaryPath, "daemon", "--config", configPath},
 		WorkingDirectory: filepath.Dir(configPath),
-		StandardOutPath:  filepath.Join(logsDir, "plane-daemon.log"),
+		EnvironmentVariables: map[string]string{
+			"PATH": defaultPath(),
+		},
+		StandardOutPath:   filepath.Join(logsDir, "plane-daemon.log"),
 		StandardErrorPath: filepath.Join(logsDir, "plane-daemon.err"),
-		KeepAlive:        true,
-		RunAtLoad:        true,
-		ThrottleInterval: 10,
+		KeepAlive:         true,
+		RunAtLoad:         true,
+		ThrottleInterval:  10,
 	}, nil
 }
 
-// Install writes the plist file to ~/Library/LaunchAgents/.
-func Install(p *DaemonPlist) error {
-	path, err := PlistPath()
+// GenerateMenu creates a launchd plist for the plane menu bar app.
+func GenerateMenu(menuBinaryPath, socketPath, logsDir string) (*LaunchAgent, error) {
+	return &LaunchAgent{
+		Label:            MenuLabel,
+		ProgramArguments: []string{menuBinaryPath},
+		EnvironmentVariables: map[string]string{
+			"PLANE_SOCKET": socketPath,
+		},
+		StandardOutPath:   filepath.Join(logsDir, "plane-menu.log"),
+		StandardErrorPath: filepath.Join(logsDir, "plane-menu.err"),
+		KeepAlive:         true,
+		RunAtLoad:         true,
+	}, nil
+}
+
+// InstallAgent writes a plist file and loads it with launchctl.
+func InstallAgent(agent *LaunchAgent) error {
+	path, err := AgentPath(agent.Label)
 	if err != nil {
 		return err
 	}
 
-	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("creating launch agents dir: %w", err)
 	}
 
-	data, err := plist.MarshalIndent(p, plist.XMLFormat, "\t")
+	data, err := plist.MarshalIndent(agent, plist.XMLFormat, "\t")
 	if err != nil {
 		return fmt.Errorf("marshaling plist: %w", err)
 	}
@@ -70,25 +110,57 @@ func Install(p *DaemonPlist) error {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
+	// Load with launchctl
+	if out, err := exec.Command("launchctl", "load", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("launchctl load %s: %w: %s", path, err, string(out))
+	}
+
 	return nil
 }
 
-// Uninstall removes the daemon plist file.
-func Uninstall() error {
-	path, err := PlistPath()
+// UnloadAgent unloads and removes a plist by label.
+func UnloadAgent(label string) error {
+	path, err := AgentPath(label)
 	if err != nil {
 		return err
 	}
 
+	if _, statErr := os.Stat(path); statErr != nil {
+		return nil // not installed
+	}
+
+	// Unload from launchctl (ignore errors if not loaded)
+	exec.Command("launchctl", "unload", path).Run()
+
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing plist: %w", err)
+		return fmt.Errorf("removing plist %s: %w", path, err)
 	}
 	return nil
 }
 
+// Install writes the plist file to ~/Library/LaunchAgents/.
+func Install(p *LaunchAgent) error {
+	return InstallAgent(p)
+}
+
+// Uninstall removes the daemon plist file.
+func Uninstall() error {
+	return UnloadAgent(DaemonLabel)
+}
+
 // Exists checks if the daemon plist is installed.
 func Exists() bool {
-	path, err := PlistPath()
+	path, err := AgentPath(DaemonLabel)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
+// MenuExists checks if the menu bar plist is installed.
+func MenuExists() bool {
+	path, err := AgentPath(MenuLabel)
 	if err != nil {
 		return false
 	}
