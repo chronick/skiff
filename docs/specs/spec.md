@@ -16,13 +16,14 @@ scheduled jobs.
 
 - Health checks with auto-restart and configurable probes
 - Internal cron-like scheduler (no external cron/launchd plists needed)
-- Control skiff API (unix socket or TCP) for programmatic access
+- Control plane API (unix socket or TCP) for programmatic access
 - Embedded DNS for container-to-container service discovery
 - Service networking with port exposure and proxy routing
 - Startup dependency ordering with health-gated readiness
 - Native macOS service management alongside containers
 - Centralized log aggregation with in-memory ring buffers
 - Config drift detection and declarative reconciliation
+- Interactive TUI dashboard and menu bar app
 
 ### What skiff intentionally omits
 
@@ -45,6 +46,8 @@ skiff is for a single machine running many services.
 - **Plist**: `howett.net/plist` (daemon plist only)
 - **DNS**: `github.com/miekg/dns` (embedded service discovery)
 - **Terminal**: `github.com/fatih/color`
+- **TUI**: `github.com/charmbracelet/bubbletea`, `lipgloss`
+- **Menu bar**: `fyne.io/systray`
 
 ### External Dependencies
 
@@ -55,8 +58,11 @@ skiff is for a single machine running many services.
 | `howett.net/plist` | Daemon plist generation |
 | `github.com/miekg/dns` | Embedded DNS server |
 | `github.com/fatih/color` | Terminal colors |
+| `github.com/charmbracelet/bubbletea` | Interactive TUI |
+| `github.com/charmbracelet/lipgloss` | TUI styling |
+| `fyne.io/systray` | Menu bar app |
 
-5 external dependencies. Tables use stdlib `text/tabwriter`.
+Tables use stdlib `text/tabwriter`.
 
 ## Architecture
 
@@ -68,6 +74,8 @@ daemon itself (`skiff install`).
 
 If the daemon dies, native services die. launchd restarts daemon (KeepAlive),
 daemon restarts services on startup (clean slate recovery).
+
+Process groups (`Setpgid`) ensure SIGTERM reaches all children.
 
 ### Container Runtime
 
@@ -81,6 +89,10 @@ type ContainerRuntime interface {
     Exec(ctx, name, command) ([]byte, error)
     List(ctx) ([]ContainerInfo, error)
     Inspect(ctx, name) (*ContainerInfo, error)
+    Stats(ctx, name) (*ContainerStats, error)
+    Logs(ctx, name, lines) ([]byte, error)
+    CreateNetwork(ctx, name, cfg) error
+    DeleteNetwork(ctx, name) error
     InjectDNS(cfg, dnsIP, dnsPort) ContainerConfig
     SetLimits(cfg, limits) ContainerConfig
 }
@@ -95,6 +107,8 @@ Standard Go patterns:
 
 - HTTP server on unix socket + optional TCP listener
 - StatusPoller: single goroutine, time.Ticker
+- StatsPoller: single goroutine, polls container CPU/memory stats
+- LogPoller: single goroutine, fetches container logs with offset tracking
 - Scheduler: one goroutine per schedule
 - HealthChecker: one goroutine per probe
 - DNS server: single goroutine, UDP queries
@@ -120,12 +134,18 @@ daemon:
   shutdown_timeout_secs: 30
   # listen: "127.0.0.1:9100"     # optional TCP
   # auth_token: "${SKIFF_AUTH_TOKEN}"  # required when listen is set
+  # allow_remote: false           # required for non-localhost binding
 
 dns:
   enabled: true
   port: 15353
   domain: skiff.local
   ttl: 5
+
+networks:
+  backend:
+    subnet: "10.0.1.0/24"
+    internal: false
 
 services:
   task-queue:
@@ -141,6 +161,7 @@ services:
       type: tcp
       port: 8001
       interval_secs: 30
+      timeout_secs: 5
       failure_threshold: 3
 
 containers:
@@ -156,10 +177,16 @@ containers:
       - "8080:8080"
     cpus: 2.0
     memory: "1g"
+    labels:
+      app: api
+    init: false
+    read_only: false
+    network: backend
     health_check:
       type: http
       url: "http://localhost:8080/health"
       interval_secs: 15
+      timeout_secs: 5
       failure_threshold: 3
       auto_restart: true
     depends_on:
@@ -173,6 +200,15 @@ schedules:
     log_file: sync.log
     timeout_secs: 300
 
+  cleanup:
+    command: ["python", "scripts/cleanup.py"]
+    working_dir: ~/platform
+    calendar:
+      hour: 3
+      minute: 0
+    log_file: cleanup.log
+    timeout_secs: 600
+
 proxy:
   routes:
     - path: /api
@@ -180,12 +216,27 @@ proxy:
       port: 8080
 ```
 
+### Config File Search Order
+
+1. Command-line flag: `-c` / `--config`
+2. `./skiff.yml` in current directory
+3. `./config/skiff.yml`
+4. `~/.config/skiff/config.yml` (XDG standard)
+5. `~/platform/skiff.yml` (legacy location)
+
 ### Environment Variables
 
 - `${VAR}` syntax resolved from process environment
 - `.env` file in same directory as skiff.yml loaded as fallback
 - Process env vars take precedence over .env values
 - `.env` is optional (missing file is not an error)
+
+### Validation Defaults
+
+- `health_check.interval_secs`: defaults to 30 if 0
+- `health_check.timeout_secs`: defaults to 5 if 0
+- `health_check.failure_threshold`: defaults to 3 if 0
+- `schedule.timeout_secs`: defaults to 300 if 0
 
 ## CLI Commands
 
@@ -199,6 +250,7 @@ proxy:
 | `skiff kill [name...]` | Force stop (SIGKILL) |
 | `skiff ps [--json]` | Primary status command |
 | `skiff status [--json]` | Alias for ps |
+| `skiff stats [name]` | Container CPU/memory stats |
 | `skiff apply [--dry-run]` | Reconcile: like up + remove orphans |
 | `skiff restart <name>` | Restart a single resource |
 | `skiff build [name...]` | Build container images |
@@ -212,6 +264,7 @@ proxy:
 | `skiff uninstall` | Remove daemon from launchd |
 | `skiff run-now <name>` | Trigger scheduled job |
 | `skiff init` | Generate starter config |
+| `skiff tui` | Open interactive terminal dashboard |
 
 ### Key Semantics
 
@@ -222,7 +275,7 @@ proxy:
 - `kill` = SIGKILL (emergency stop)
 - `ps` is primary, `status` is alias
 
-## Control Skiff API
+## Control Plane API
 
 Unix socket (file perms auth) + optional TCP (bearer token auth).
 All routes return JSON, prefixed with `/v1/`.
@@ -236,6 +289,9 @@ All routes return JSON, prefixed with `/v1/`.
 | GET | `/v1/services` | All services |
 | GET | `/v1/containers` | All containers |
 | GET | `/v1/schedules` | All schedules |
+| GET | `/v1/schedule/{name}` | Single schedule detail |
+| GET | `/v1/stats` | All container stats |
+| GET | `/v1/stats/{name}` | Single container stats |
 | POST | `/v1/up` | Start resources |
 | POST | `/v1/down` | Stop resources |
 | POST | `/v1/apply` | Reconcile config |
@@ -291,6 +347,7 @@ On daemon startup: clean slate.
 - Non-localhost binding requires `allow_remote: true`
 - Volume paths must not contain `..`
 - Name validation: `^[a-zA-Z0-9_-]+$`
+- Label prefix `skiff.*` is reserved
 - State file locking prevents concurrent daemons
 
 ## Graceful Shutdown
@@ -306,24 +363,28 @@ On SIGTERM/SIGINT:
 ## Project Layout
 
 ```
-cmd/skiff/main.go          -- CLI entrypoint (cobra)
+cmd/skiff/main.go            -- CLI entrypoint (cobra)
+cmd/skiff-menu/main.go       -- menu bar app (systray)
 internal/
-  config/config.go         -- skiff.yml parsing, validation, env resolution
-  daemon/daemon.go         -- HTTP server, lifecycle orchestration
-  daemon/routes.go         -- API route handlers
-  daemon/proxy.go          -- reverse proxy
-  dns/dns.go               -- embedded DNS server
-  runtime/runtime.go       -- ContainerRuntime interface
-  runtime/apple.go         -- Apple Container Runtime implementation
-  supervisor/supervisor.go -- native service process management
-  plist/plist.go           -- daemon-only launchd plist
-  scheduler/scheduler.go   -- internal schedule runner
-  health/health.go         -- health check probes
-  status/status.go         -- SharedState + status types
-  logbuf/logbuf.go         -- ring buffer log aggregation
-  runner/runner.go         -- ProcessRunner interface
-config/skiff.example.yml   -- annotated example config
-docs/specs/spec.md         -- this file
+  client/client.go           -- client library for daemon communication
+  config/config.go           -- skiff.yml parsing, validation, env resolution
+  daemon/daemon.go           -- HTTP server, lifecycle orchestration
+  daemon/routes.go           -- API route handlers
+  daemon/proxy.go            -- reverse proxy
+  dns/dns.go                 -- embedded DNS server
+  runtime/runtime.go         -- ContainerRuntime interface
+  runtime/apple.go           -- Apple Container Runtime implementation
+  supervisor/supervisor.go   -- native service process management
+  plist/plist.go             -- daemon-only launchd plist
+  scheduler/scheduler.go     -- internal schedule runner
+  health/health.go           -- health check probes
+  status/status.go           -- SharedState + status types
+  logbuf/logbuf.go           -- ring buffer log aggregation
+  runner/runner.go           -- ProcessRunner interface
+  tui/tui.go                 -- interactive terminal UI (bubbletea)
+  testutil/                  -- mock runner, mock runtime, test helpers
+config/skiff.example.yml     -- annotated example config
+docs/specs/spec.md           -- this file
 ```
 
 ## Implementation Phases
@@ -341,6 +402,9 @@ Phase 8:  Log aggregation                                       [done]
 Phase 9:  TCP listener + auth + reverse proxy + security        [done]
 Phase 10: Self-management (install/uninstall, daemonize, PID)   [done]
 Phase 11: Config watch + apply reconciliation + --dry-run       [done]
+Phase 12: Container stats + stats API + stats CLI               [done]
+Phase 13: Interactive TUI dashboard                             [done]
+Phase 14: Menu bar app                                          [done]
 ```
 
 ## Pre-implementation Research Required

@@ -1,54 +1,42 @@
 # CLAUDE.md
 
-## Project Overview
+## Project
 
 **skiff** -- Container orchestration for macOS. Single binary, single YAML config.
 
-## Tech Stack
-
-- Go 1.22+, 5 external deps (cobra, yaml.v3, plist, miekg/dns, fatih/color)
-- Process supervision via os/exec (NOT per-service launchd plists)
-- Apple Container Runtime via abstract ContainerRuntime interface
+Go 1.22+, 5 external deps (cobra, yaml.v3, plist, miekg/dns, fatih/color).
 
 ## Commands
 
 ```bash
 go build -o skiff ./cmd/skiff    # build
-go test ./...                     # test all packages
+go test ./...                     # test all
 go build ./...                    # check compilation
-./skiff init                      # generate starter config
-./skiff daemon                    # start daemon (foreground)
-./skiff daemon -d                 # start daemon (background)
-./skiff up                        # start all resources
-./skiff ps                        # status table
-./skiff apply --dry-run           # preview changes
-./skiff config --validate-only    # validate config (CI)
 ```
 
-## Architecture
+## Layout
 
-- `cmd/skiff/main.go` -- cobra CLI, talks to daemon via unix socket
-- `internal/config/` -- skiff.yml parsing, validation, env resolution, .env support
-- `internal/daemon/` -- HTTP server (unix socket + TCP), API routes, reverse proxy
-- `internal/supervisor/` -- native service process management (spawn, signal, restart)
-- `internal/runtime/` -- ContainerRuntime interface + Apple implementation
-- `internal/scheduler/` -- internal cron-like scheduler
-- `internal/health/` -- HTTP/TCP/command health probes
-- `internal/status/` -- SharedState (sync.RWMutex-protected)
-- `internal/dns/` -- embedded DNS for service discovery
-- `internal/logbuf/` -- ring buffer log aggregation
-- `internal/plist/` -- daemon-only launchd plist (skiff install/uninstall)
-- `internal/runner/` -- ProcessRunner interface for testability
+```
+cmd/skiff/main.go       -- cobra CLI entry point
+internal/
+  config/               -- skiff.yml parsing, validation, env/.env resolution
+  daemon/               -- HTTP server (unix socket + TCP), API routes, reverse proxy
+  supervisor/           -- native service process management (os/exec)
+  runtime/              -- ContainerRuntime interface + Apple implementation
+  scheduler/            -- cron-like scheduler
+  health/               -- HTTP/TCP/command health probes
+  status/               -- SharedState (sync.RWMutex)
+  dns/                  -- embedded DNS for service discovery
+  logbuf/               -- ring buffer log aggregation
+  plist/                -- launchd plist (daemon install/uninstall only)
+  runner/               -- ProcessRunner interface for testability
+config/skiff.example.yml
+```
 
-## Key Design Decisions
+## Key Design
 
-- Daemon owns all child processes; if daemon dies, services die
+- Daemon owns all child processes; daemon dies → services die
 - Clean slate recovery on daemon restart
-- Cross-type dependency DAG (services can depend on containers and vice versa)
-- Schedules are NOT part of the dependency DAG
+- Cross-type dependency DAG (services ↔ containers); schedules excluded
 - State file locking (flock) prevents concurrent daemons
-- TCP listener requires auth_token (validation error otherwise)
-
-## Spec
-
-Source of truth: `docs/specs/spec.md`
+- TCP listener requires auth_token
