@@ -81,7 +81,7 @@ func GenerateMenu(menuBinaryPath, socketPath, logsDir string) (*LaunchAgent, err
 		Label:            MenuLabel,
 		ProgramArguments: []string{menuBinaryPath},
 		EnvironmentVariables: map[string]string{
-			"PLANE_SOCKET": socketPath,
+			"SKIFF_SOCKET": socketPath,
 		},
 		StandardOutPath:   filepath.Join(logsDir, "skiff-menu.log"),
 		StandardErrorPath: filepath.Join(logsDir, "skiff-menu.err"),

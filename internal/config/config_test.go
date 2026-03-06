@@ -246,15 +246,15 @@ func TestEnvVarResolution(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "skiff.yml")
 
-	os.Setenv("TEST_PLANE_VAR", "resolved-value")
-	defer os.Unsetenv("TEST_PLANE_VAR")
+	os.Setenv("TEST_SKIFF_VAR", "resolved-value")
+	defer os.Unsetenv("TEST_SKIFF_VAR")
 
 	content := `version: 1
 services:
   web:
     command: ["echo"]
     env:
-      MY_VAR: "${TEST_PLANE_VAR}"
+      MY_VAR: "${TEST_SKIFF_VAR}"
 `
 	os.WriteFile(cfgPath, []byte(content), 0644)
 	cfg, err := Load(cfgPath)

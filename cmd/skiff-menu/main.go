@@ -21,7 +21,7 @@ var (
 
 func main() {
 	socketPath := client.DefaultSocketPath()
-	if sp := os.Getenv("PLANE_SOCKET"); sp != "" {
+	if sp := os.Getenv("SKIFF_SOCKET"); sp != "" {
 		socketPath = sp
 	}
 	cl = client.New(socketPath)
@@ -29,7 +29,7 @@ func main() {
 }
 
 func onReady() {
-	systray.SetTitle("✈️")
+	systray.SetTitle("⛵")
 	systray.SetTooltip("skiff - container orchestration")
 
 	mStatus = systray.AddMenuItem("skiff: connecting...", "Daemon status")
@@ -81,7 +81,7 @@ func refreshLoop() {
 		snap, err := cl.Status()
 		if err != nil {
 			mStatus.SetTitle("skiff: disconnected")
-			systray.SetTitle("✈️")
+			systray.SetTitle("⛵")
 			systray.SetTooltip("skiff - disconnected")
 			for _, item := range resourceItems {
 				item.Hide()
@@ -99,10 +99,10 @@ func refreshLoop() {
 		}
 
 		if total > 0 {
-			systray.SetTitle(fmt.Sprintf("✈️ %d/%d", running, total))
+			systray.SetTitle(fmt.Sprintf("⛵ %d/%d", running, total))
 			mStatus.SetTitle(fmt.Sprintf("skiff: %d/%d running", running, total))
 		} else {
-			systray.SetTitle("✈️")
+			systray.SetTitle("⛵")
 			mStatus.SetTitle("skiff: no resources")
 		}
 		systray.SetTooltip(fmt.Sprintf("skiff - %d/%d resources running", running, total))

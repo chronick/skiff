@@ -119,7 +119,7 @@ daemon:
   config_watch: true
   shutdown_timeout_secs: 30
   # listen: "127.0.0.1:9100"     # optional TCP
-  # auth_token: "${PLANE_AUTH_TOKEN}"  # required when listen is set
+  # auth_token: "${SKIFF_AUTH_TOKEN}"  # required when listen is set
 
 dns:
   enabled: true

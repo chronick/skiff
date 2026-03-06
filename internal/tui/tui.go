@@ -557,7 +557,7 @@ func (m model) renderDashboard() string {
 	var b strings.Builder
 
 	// Header
-	title := titleStyle.Render(" ✈  skiff ")
+	title := titleStyle.Render(" ⛵ skiff")
 	var status string
 	if m.connected {
 		status = connOK.Render("● connected")
@@ -694,7 +694,7 @@ func (m model) renderLogs() string {
 	var b strings.Builder
 
 	name := m.viewingName
-	title := titleStyle.Render(" ✈  skiff ")
+	title := titleStyle.Render(" ⛵ skiff")
 	srcLabel := "ring buffer"
 	if m.containerLogSrc {
 		srcLabel = "container stdout"
@@ -779,7 +779,7 @@ func (m model) renderLogs() string {
 func (m model) renderStats() string {
 	var b strings.Builder
 
-	title := titleStyle.Render(" ✈  skiff ")
+	title := titleStyle.Render(" ⛵ skiff")
 	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render("container stats")
 	b.WriteString(title + breadcrumb + "\n\n")
 
@@ -818,7 +818,7 @@ func (m model) renderStats() string {
 func (m model) renderDetail() string {
 	var b strings.Builder
 
-	title := titleStyle.Render(" ✈  skiff ")
+	title := titleStyle.Render(" ⛵ skiff")
 	name := m.viewingName
 	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render(name) + dimStyle.Render(" detail")
 	b.WriteString(title + breadcrumb + "\n\n")

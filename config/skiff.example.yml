@@ -13,7 +13,7 @@ daemon:
   shutdown_timeout_secs: 30
   # Optional TCP listener for remote/programmatic access
   # listen: "127.0.0.1:9100"
-  # auth_token: "${PLANE_AUTH_TOKEN}"
+  # auth_token: "${SKIFF_AUTH_TOKEN}"
 
 dns:
   enabled: true
