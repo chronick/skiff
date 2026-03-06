@@ -49,7 +49,7 @@ func main() {
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to plane.yml (default: ./plane.yml)")
+	root.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to config file (default: ./plane.yml, ~/.config/plane/config.yml)")
 
 	root.AddCommand(
 		daemonCmd(),
@@ -732,9 +732,14 @@ func findConfig() string {
 			return c
 		}
 	}
-	// Check home directory
+	// Check XDG-style config directory
 	home, _ := os.UserHomeDir()
 	if home != "" {
+		xdg := filepath.Join(home, ".config", "plane", "config.yml")
+		if _, err := os.Stat(xdg); err == nil {
+			return xdg
+		}
+		// Legacy location
 		p := filepath.Join(home, "platform", "plane.yml")
 		if _, err := os.Stat(p); err == nil {
 			return p
