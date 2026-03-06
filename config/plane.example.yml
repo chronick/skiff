@@ -1,0 +1,113 @@
+version: 1
+
+paths:
+  base: ~/platform
+  socket: ~/platform/plane.sock
+  logs: ~/platform/logs
+  state_file: ~/platform/plane-state.json
+
+daemon:
+  status_poll_interval_secs: 5
+  log_buffer_lines: 500
+  config_watch: true
+  shutdown_timeout_secs: 30
+  # Optional TCP listener for remote/programmatic access
+  # listen: "127.0.0.1:9100"
+  # auth_token: "${PLANE_AUTH_TOKEN}"
+
+dns:
+  enabled: true
+  port: 15353
+  domain: plane.local
+  ttl: 5
+
+# Native macOS services (managed as child processes)
+services:
+  task-queue:
+    command: [".venv/bin/huey_consumer", "tasks.huey", "-w", "4"]
+    working_dir: ~/platform
+    restart_policy: always       # always | on-failure | never
+    max_restarts: 0              # 0 = unlimited
+    restart_backoff_secs: 5      # initial backoff, doubles per crash, caps at 60s
+    env:
+      DATABASE_URL: "${DATABASE_URL}"
+    log_file: task-queue.log
+    health_check:
+      type: tcp
+      port: 8001
+      interval_secs: 30
+      failure_threshold: 3
+
+  web-app:
+    command: ["npm", "run", "start"]
+    working_dir: ~/platform/web
+    restart_policy: always
+    log_file: web.log
+    health_check:
+      type: http
+      url: "http://localhost:3000/health"
+      interval_secs: 15
+      timeout_secs: 5
+      failure_threshold: 3
+      auto_restart: true
+
+# Apple Containers
+containers:
+  api-server:
+    image: api-server:latest
+    dockerfile: containers/Dockerfile.api
+    volumes:
+      - ~/platform/data:/data
+    env:
+      DATABASE_URL: "postgres://user:pass@db:5432/app"
+      API_SECRET: "${API_SECRET}"
+    ports:
+      - "8080:8080"
+    cpus: 2.0
+    memory: "1g"
+    health_check:
+      type: http
+      url: "http://localhost:8080/health"
+      interval_secs: 15
+      failure_threshold: 3
+      auto_restart: true
+    depends_on:
+      - task-queue
+
+  worker:
+    image: worker:latest
+    dockerfile: containers/Dockerfile.worker
+    volumes:
+      - ~/platform/data:/data
+    env:
+      DATABASE_URL: "${DATABASE_URL}"
+
+# Scheduled jobs
+schedules:
+  data-sync:
+    command: ["python", "scripts/sync.py"]
+    working_dir: ~/platform
+    interval_seconds: 3600
+    log_file: sync.log
+    env:
+      SYNC_TOKEN: "${SYNC_TOKEN}"
+    timeout_secs: 300
+
+  cleanup:
+    command: ["python", "scripts/cleanup.py"]
+    working_dir: ~/platform
+    calendar:
+      hour: 3
+      minute: 0
+    log_file: cleanup.log
+    timeout_secs: 600
+
+# Reverse proxy routes (only served on TCP listener)
+proxy:
+  routes:
+    - path: /api
+      target: api-server
+      port: 8080
+    - path: /app
+      target: web-app
+      port: 3000

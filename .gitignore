@@ -1,0 +1,22 @@
+# Binary
+plane
+*.exe
+
+# Go
+vendor/
+
+# OS
+.DS_Store
+
+# Runtime state
+*.sock
+*.pid
+*.lock
+plane-state.json
+
+# Env files (may contain secrets)
+.env
+
+# Logs
+logs/
+*.log
