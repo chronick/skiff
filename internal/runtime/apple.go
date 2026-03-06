@@ -126,6 +126,9 @@ func (a *AppleRuntime) Inspect(ctx context.Context, name string) (*ContainerInfo
 }
 
 func (a *AppleRuntime) InjectDNS(cfg ContainerConfig, dnsIP string, dnsPort int) ContainerConfig {
+	if cfg.Env == nil {
+		cfg.Env = make(map[string]string)
+	}
 	cfg.Env["PLANE_DNS"] = fmt.Sprintf("%s:%d", dnsIP, dnsPort)
 	// Add DNS flag if supported by runtime
 	// This may need adjustment based on Apple Container CLI capabilities

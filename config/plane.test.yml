@@ -54,7 +54,6 @@ containers:
       interval_secs: 10
       failure_threshold: 2
       auto_restart: true
-    log_file: nginx.log
 
 # Scheduled jobs
 schedules:
