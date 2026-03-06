@@ -22,3 +22,7 @@ plane.yml
 # Logs
 logs/
 *.log
+
+# Test coverage
+coverage.out
+coverage.html
