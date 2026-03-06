@@ -220,6 +220,46 @@ type StatsEntry struct {
 	PIDs       int     `json:"pids"`
 }
 
+func (c *Client) RunNow(name string) error {
+	_, err := c.call("POST", "/v1/schedule/"+name+"/run-now", nil)
+	return err
+}
+
+func (c *Client) Build(names []string) (*ActionResult, error) {
+	body := map[string]interface{}{}
+	if len(names) > 0 {
+		body["names"] = names
+	}
+	data, err := c.call("POST", "/v1/build", body)
+	if err != nil {
+		return nil, err
+	}
+	var result ActionResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) Exec(name string, command []string) (string, error) {
+	body := map[string]interface{}{"command": command}
+	data, err := c.call("POST", "/v1/exec/"+name, body)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		Output string `json:"output"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", err
+	}
+	if result.Error != "" {
+		return result.Output, fmt.Errorf("%s", result.Error)
+	}
+	return result.Output, nil
+}
+
 func (c *Client) ContainerLogs(name string, lines int) (string, error) {
 	path := fmt.Sprintf("/v1/logs/%s?lines=%d&source=container", name, lines)
 	data, err := c.call("GET", path, nil)
