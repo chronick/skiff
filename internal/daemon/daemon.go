@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,6 +38,9 @@ type Daemon struct {
 	logger     *slog.Logger
 	server     *http.Server
 	tcpServer  *http.Server
+
+	logOffsetsMu sync.Mutex
+	logOffsets   map[string]int // tracks last-seen log line count per container
 }
 
 // New creates a Daemon from config.
@@ -67,6 +72,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 		dns:        dnsServer,
 		runner:     r,
 		logger:     logger,
+		logOffsets: make(map[string]int),
 	}
 
 	// Wire up health check auto-restart callback
@@ -85,7 +91,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 		case status.TypeContainer:
 			_ = rt.Stop(context.Background(), name)
 			if cCfg, ok := cfg.Containers[name]; ok {
-				rtCfg := containerToRuntimeConfig(cCfg)
+				rtCfg := containerToRuntimeConfig(name, cCfg)
 				_ = rt.Run(context.Background(), name, rtCfg)
 			}
 		}
@@ -149,6 +155,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.scheduler.Start(sigCtx, d.cfg.Schedules)
 	}
 
+	// Start stats poller
+	go d.statsPoller(sigCtx)
+
+	// Start log poller
+	go d.logPoller(sigCtx)
+
 	// Start HTTP server on unix socket
 	mux := d.setupRoutes()
 
@@ -203,6 +215,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 func (d *Daemon) startAll(ctx context.Context) error {
+	// Create networks before starting containers
+	for name, netCfg := range d.cfg.Networks {
+		if err := d.runtime.CreateNetwork(ctx, name, runtime.NetworkConfig{
+			Subnet:   netCfg.Subnet,
+			Internal: netCfg.Internal,
+		}); err != nil {
+			d.logger.Error("failed to create network", "name", name, "error", err)
+		}
+	}
+
 	order, err := config.DependencyOrder(d.cfg)
 	if err != nil {
 		return fmt.Errorf("computing dependency order: %w", err)
@@ -226,8 +248,8 @@ func (d *Daemon) startAll(ctx context.Context) error {
 		}
 		if cCfg, ok := d.cfg.Containers[name]; ok {
 			d.logger.Info("starting container", "name", name)
-			rtCfg := containerToRuntimeConfig(cCfg)
-			if d.dns != nil {
+			rtCfg := containerToRuntimeConfig(name, cCfg)
+			if d.dns != nil && cCfg.Network != "host" {
 				rtCfg = d.runtime.InjectDNS(rtCfg, dns.DetectGateway().String(), d.cfg.DNS.Port)
 			}
 			if cCfg.CPUs > 0 || cCfg.Memory != "" {
@@ -285,6 +307,11 @@ func (d *Daemon) shutdown() error {
 		_ = d.runtime.Stop(shutdownCtx, name)
 	}
 
+	// Delete networks
+	for name := range d.cfg.Networks {
+		_ = d.runtime.DeleteNetwork(shutdownCtx, name)
+	}
+
 	// Stop DNS
 	if d.dns != nil {
 		d.dns.Stop()
@@ -320,7 +347,7 @@ func (d *Daemon) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func containerToRuntimeConfig(c config.ContainerConfig) runtime.ContainerConfig {
+func containerToRuntimeConfig(name string, c config.ContainerConfig) runtime.ContainerConfig {
 	return runtime.ContainerConfig{
 		Image:      c.Image,
 		Dockerfile: c.Dockerfile,
@@ -330,5 +357,92 @@ func containerToRuntimeConfig(c config.ContainerConfig) runtime.ContainerConfig 
 		Ports:      c.Ports,
 		CPUs:       c.CPUs,
 		Memory:     c.Memory,
+		Labels:     c.Labels,
+		Init:       c.Init,
+		ReadOnly:   c.ReadOnly,
+		Network:    c.Network,
+	}
+}
+
+// statsPoller periodically polls container stats and updates SharedState.
+func (d *Daemon) statsPoller(ctx context.Context) {
+	interval := time.Duration(d.cfg.Daemon.StatusPollIntervalSecs) * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for name := range d.cfg.Containers {
+				rs, ok := d.state.GetResource(name)
+				if !ok || rs.State != status.StateRunning {
+					continue
+				}
+				stats, err := d.runtime.Stats(ctx, name)
+				if err != nil {
+					d.logger.Debug("stats poll failed", "name", name, "error", err)
+					continue
+				}
+				// Update stats on the resource in state
+				d.state.UpdateStats(name, stats)
+			}
+		}
+	}
+}
+
+// logPoller periodically pulls container logs and appends to the ring buffer.
+func (d *Daemon) logPoller(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for name := range d.cfg.Containers {
+				rs, ok := d.state.GetResource(name)
+				if !ok || rs.State != status.StateRunning {
+					continue
+				}
+
+				d.logOffsetsMu.Lock()
+				offset := d.logOffsets[name]
+				d.logOffsetsMu.Unlock()
+
+				// Fetch more lines than the offset to get new ones
+				fetchLines := offset + 200
+				out, err := d.runtime.Logs(ctx, name, fetchLines)
+				if err != nil {
+					d.logger.Debug("log poll failed", "name", name, "error", err)
+					continue
+				}
+
+				allLines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+				if len(allLines) == 1 && allLines[0] == "" {
+					continue
+				}
+
+				// Only append lines beyond the offset
+				newLines := allLines
+				if offset < len(allLines) {
+					newLines = allLines[offset:]
+				} else {
+					newLines = nil
+				}
+
+				for _, line := range newLines {
+					if line != "" {
+						d.logs.Append(name, line)
+					}
+				}
+
+				d.logOffsetsMu.Lock()
+				d.logOffsets[name] = len(allLines)
+				d.logOffsetsMu.Unlock()
+			}
+		}
 	}
 }

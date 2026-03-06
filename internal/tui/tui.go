@@ -16,6 +16,7 @@ type viewMode int
 const (
 	viewDashboard viewMode = iota
 	viewLogs
+	viewStats
 )
 
 // Messages
@@ -26,6 +27,16 @@ type statusMsg struct {
 
 type logsMsg struct {
 	entries []client.LogEntry
+	err     error
+}
+
+type containerLogsMsg struct {
+	raw string
+	err error
+}
+
+type statsListMsg struct {
+	entries []client.StatsEntry
 	err     error
 }
 
@@ -73,6 +84,7 @@ var (
 	connOK      = lipgloss.NewStyle().Foreground(lipgloss.Color("#73F59F")).Bold(true)
 	connErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Bold(true)
 	msgStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD93D"))
+	statsStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#87CEEB"))
 )
 
 type model struct {
@@ -80,14 +92,18 @@ type model struct {
 	resources []client.ResourceInfo
 	schedules []client.ScheduleInfo
 	logs      []client.LogEntry
+	stats     []client.StatsEntry
 
-	view      viewMode
-	cursor    int
-	logOffset int
-	width     int
-	height    int
-	connected bool
-	message   string
+	view            viewMode
+	cursor          int
+	logOffset       int
+	width           int
+	height          int
+	connected       bool
+	message         string
+	showStats       bool   // toggle stats columns in dashboard
+	containerLogSrc bool   // show container stdout instead of ring buffer
+	containerLogRaw string // raw container log output
 }
 
 func Run(socketPath string) error {
@@ -119,6 +135,20 @@ func fetchLogs(c *client.Client, name string) tea.Cmd {
 	return func() tea.Msg {
 		entries, err := c.Logs(name, 200)
 		return logsMsg{entries: entries, err: err}
+	}
+}
+
+func fetchStats(c *client.Client) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := c.Stats()
+		return statsListMsg{entries: entries, err: err}
+	}
+}
+
+func fetchContainerLogs(c *client.Client, name string, lines int) tea.Cmd {
+	return func() tea.Msg {
+		raw, err := c.ContainerLogs(name, lines)
+		return containerLogsMsg{raw: raw, err: err}
 	}
 }
 
@@ -171,6 +201,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case containerLogsMsg:
+		if msg.err == nil {
+			m.containerLogRaw = msg.raw
+		}
+		return m, nil
+
+	case statsListMsg:
+		if msg.err == nil {
+			m.stats = msg.entries
+		}
+		return m, nil
+
 	case actionMsg:
 		if msg.err != nil {
 			m.message = fmt.Sprintf("error: %s %s: %s", msg.action, msg.name, msg.err)
@@ -190,7 +232,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		cmds := []tea.Cmd{tick(), fetchStatus(m.client)}
 		if m.view == viewLogs && m.selectedName() != "" {
-			cmds = append(cmds, fetchLogs(m.client, m.selectedName()))
+			if m.containerLogSrc {
+				cmds = append(cmds, fetchContainerLogs(m.client, m.selectedName(), 200))
+			} else {
+				cmds = append(cmds, fetchLogs(m.client, m.selectedName()))
+			}
+		}
+		if m.view == viewStats || m.showStats {
+			cmds = append(cmds, fetchStats(m.client))
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -235,6 +284,33 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.view == viewLogs {
 			m.view = viewDashboard
 			m.logs = nil
+			m.containerLogRaw = ""
+			m.containerLogSrc = false
+		} else if m.view == viewStats {
+			m.view = viewDashboard
+		}
+
+	case "t":
+		if m.view == viewDashboard {
+			m.showStats = !m.showStats
+			if m.showStats {
+				return m, fetchStats(m.client)
+			}
+		}
+
+	case "S":
+		if m.view == viewDashboard {
+			m.view = viewStats
+			return m, fetchStats(m.client)
+		}
+
+	case "c":
+		if m.view == viewLogs && m.selectedName() != "" {
+			m.containerLogSrc = !m.containerLogSrc
+			if m.containerLogSrc {
+				return m, fetchContainerLogs(m.client, m.selectedName(), 200)
+			}
+			return m, fetchLogs(m.client, m.selectedName())
 		}
 
 	case "s":
@@ -288,6 +364,8 @@ func (m model) View() string {
 	switch m.view {
 	case viewLogs:
 		return m.renderLogs()
+	case viewStats:
+		return m.renderStats()
 	default:
 		return m.renderDashboard()
 	}
@@ -316,13 +394,33 @@ func (m model) renderDashboard() string {
 	} else if len(m.resources) == 0 {
 		b.WriteString(dimStyle.Render("  No resources configured") + "\n")
 	} else {
-		hdr := fmt.Sprintf("  %-22s %-12s %-12s %-8s %s", "NAME", "TYPE", "STATE", "HEALTH", "UPTIME")
-		b.WriteString(colHeaderStyle.Render(hdr) + "\n")
+		if m.showStats {
+			hdr := fmt.Sprintf("  %-22s %-12s %-12s %-8s %-8s %-8s %-14s %s", "NAME", "TYPE", "STATE", "HEALTH", "UPTIME", "CPU%", "MEM", "PIDS")
+			b.WriteString(colHeaderStyle.Render(hdr) + "\n")
+		} else {
+			hdr := fmt.Sprintf("  %-22s %-12s %-12s %-8s %s", "NAME", "TYPE", "STATE", "HEALTH", "UPTIME")
+			b.WriteString(colHeaderStyle.Render(hdr) + "\n")
+		}
 
 		for i, r := range m.resources {
+			cpuStr, memStr, pidsStr := "-", "-", "-"
+			if m.showStats {
+				if r.Stats != nil {
+					cpuStr = fmt.Sprintf("%.1f%%", r.Stats.CPUPercent)
+					memStr = fmt.Sprintf("%d/%dMB", r.Stats.MemUsageMB, r.Stats.MemLimitMB)
+					pidsStr = fmt.Sprintf("%d", r.Stats.PIDs)
+				}
+			}
+
 			if i == m.cursor {
-				plain := fmt.Sprintf("  %-22s %-12s %-12s %-8s %s",
-					r.Name, r.Type, r.State, healthText(r.Health), uptimeText(r.UptimeSecs))
+				var plain string
+				if m.showStats {
+					plain = fmt.Sprintf("  %-22s %-12s %-12s %-8s %-8s %-8s %-14s %s",
+						r.Name, r.Type, r.State, healthText(r.Health), uptimeText(r.UptimeSecs), cpuStr, memStr, pidsStr)
+				} else {
+					plain = fmt.Sprintf("  %-22s %-12s %-12s %-8s %s",
+						r.Name, r.Type, r.State, healthText(r.Health), uptimeText(r.UptimeSecs))
+				}
 				line := selectedStyle.Render(padTo(plain, m.width))
 				b.WriteString(line + "\n")
 			} else {
@@ -330,8 +428,15 @@ func (m model) renderDashboard() string {
 				typeCell := padCell(r.Type, 12)
 				stateCell := padCell(renderState(r.State), 12)
 				healthCell := padCell(renderHealth(r.Health), 8)
-				uptimeCell := renderUptime(r.UptimeSecs)
-				b.WriteString(fmt.Sprintf("  %s %s %s %s %s\n", nameCell, typeCell, stateCell, healthCell, uptimeCell))
+				uptimeCell := padCell(renderUptime(r.UptimeSecs), 8)
+				if m.showStats {
+					cpuCell := padCell(statsStyle.Render(cpuStr), 8)
+					memCell := padCell(statsStyle.Render(memStr), 14)
+					pidsCell := statsStyle.Render(pidsStr)
+					b.WriteString(fmt.Sprintf("  %s %s %s %s %s %s %s %s\n", nameCell, typeCell, stateCell, healthCell, uptimeCell, cpuCell, memCell, pidsCell))
+				} else {
+					b.WriteString(fmt.Sprintf("  %s %s %s %s %s\n", nameCell, typeCell, stateCell, healthCell, uptimeCell))
+				}
 			}
 		}
 	}
@@ -363,9 +468,9 @@ func (m model) renderDashboard() string {
 	}
 
 	// Footer
-	footer := " ↑↓ navigate │ enter logs │ s start │ x stop │ r restart │ a start all │ d stop all │ q quit"
+	footer := " ↑↓ navigate │ enter logs │ s start │ x stop │ r restart │ t stats │ S stats view │ a all up │ d all down │ q quit"
 	if len(footer) > m.width {
-		footer = " ↑↓ nav │ ↵ logs │ s/x start/stop │ r restart │ q quit"
+		footer = " ↑↓ nav │ ↵ logs │ s/x start/stop │ r restart │ t stats │ q quit"
 	}
 	b.WriteString(footerStyle.Render(footer))
 
@@ -377,38 +482,66 @@ func (m model) renderLogs() string {
 
 	name := m.selectedName()
 	title := titleStyle.Render(" ✈  plane ")
-	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render(name) + dimStyle.Render(" logs")
+	srcLabel := "ring buffer"
+	if m.containerLogSrc {
+		srcLabel = "container stdout"
+	}
+	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render(name) + dimStyle.Render(" logs") + dimStyle.Render(" ("+srcLabel+")")
 	b.WriteString(title + breadcrumb + "\n\n")
 
-	if len(m.logs) == 0 {
-		b.WriteString(dimStyle.Render("  No log entries") + "\n")
-	} else {
-		visible := m.height - 5
-		if visible < 5 {
-			visible = 5
-		}
-
-		start := len(m.logs) - visible - m.logOffset
-		if start < 0 {
-			start = 0
-		}
-		end := start + visible
-		if end > len(m.logs) {
-			end = len(m.logs)
-		}
-
-		for _, e := range m.logs[start:end] {
-			ts := logTime.Render(e.Timestamp.Format("15:04:05"))
-			var lvl string
-			switch e.Level {
-			case "error":
-				lvl = logError.Render("[ERROR]")
-			case "warn":
-				lvl = logWarn.Render("[WARN] ")
-			default:
-				lvl = logLevel.Render(fmt.Sprintf("[%-5s]", strings.ToUpper(e.Level)))
+	if m.containerLogSrc {
+		// Render raw container logs
+		if m.containerLogRaw == "" {
+			b.WriteString(dimStyle.Render("  No container log output") + "\n")
+		} else {
+			visible := m.height - 5
+			if visible < 5 {
+				visible = 5
 			}
-			b.WriteString(fmt.Sprintf("  %s %s %s\n", ts, lvl, e.Message))
+			rawLines := strings.Split(strings.TrimRight(m.containerLogRaw, "\n"), "\n")
+			start := len(rawLines) - visible - m.logOffset
+			if start < 0 {
+				start = 0
+			}
+			end := start + visible
+			if end > len(rawLines) {
+				end = len(rawLines)
+			}
+			for _, line := range rawLines[start:end] {
+				b.WriteString("  " + line + "\n")
+			}
+		}
+	} else {
+		if len(m.logs) == 0 {
+			b.WriteString(dimStyle.Render("  No log entries") + "\n")
+		} else {
+			visible := m.height - 5
+			if visible < 5 {
+				visible = 5
+			}
+
+			start := len(m.logs) - visible - m.logOffset
+			if start < 0 {
+				start = 0
+			}
+			end := start + visible
+			if end > len(m.logs) {
+				end = len(m.logs)
+			}
+
+			for _, e := range m.logs[start:end] {
+				ts := logTime.Render(e.Timestamp.Format("15:04:05"))
+				var lvl string
+				switch e.Level {
+				case "error":
+					lvl = logError.Render("[ERROR]")
+				case "warn":
+					lvl = logWarn.Render("[WARN] ")
+				default:
+					lvl = logLevel.Render(fmt.Sprintf("[%-5s]", strings.ToUpper(e.Level)))
+				}
+				b.WriteString(fmt.Sprintf("  %s %s %s\n", ts, lvl, e.Message))
+			}
 		}
 	}
 
@@ -420,7 +553,46 @@ func (m model) renderLogs() string {
 		b.WriteString(strings.Repeat("\n", remaining))
 	}
 
-	footer := " esc back │ ↑↓ scroll │ q quit"
+	footer := " esc back │ ↑↓ scroll │ c toggle source │ q quit"
+	b.WriteString(footerStyle.Render(footer))
+
+	return b.String()
+}
+
+func (m model) renderStats() string {
+	var b strings.Builder
+
+	title := titleStyle.Render(" ✈  plane ")
+	breadcrumb := dimStyle.Render(" > ") + lipgloss.NewStyle().Bold(true).Render("container stats")
+	b.WriteString(title + breadcrumb + "\n\n")
+
+	if len(m.stats) == 0 {
+		b.WriteString(dimStyle.Render("  No container stats available") + "\n")
+	} else {
+		hdr := fmt.Sprintf("  %-22s %-10s %-18s %s", "NAME", "CPU%", "MEM USAGE/LIMIT", "PIDS")
+		b.WriteString(colHeaderStyle.Render(hdr) + "\n")
+
+		for _, s := range m.stats {
+			cpuStr := statsStyle.Render(fmt.Sprintf("%.1f%%", s.CPUPercent))
+			memStr := statsStyle.Render(fmt.Sprintf("%dMB/%dMB", s.MemUsageMB, s.MemLimitMB))
+			pidsStr := statsStyle.Render(fmt.Sprintf("%d", s.PIDs))
+			b.WriteString(fmt.Sprintf("  %-22s %s %s %s\n",
+				s.Name,
+				padCell(cpuStr, 10),
+				padCell(memStr, 18),
+				pidsStr))
+		}
+	}
+
+	// Fill to bottom
+	content := b.String()
+	lines := strings.Count(content, "\n")
+	remaining := m.height - lines - 2
+	if remaining > 0 {
+		b.WriteString(strings.Repeat("\n", remaining))
+	}
+
+	footer := " esc back │ q quit"
 	b.WriteString(footerStyle.Render(footer))
 
 	return b.String()

@@ -5,6 +5,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/chronick/plane/internal/runtime"
 )
 
 // ResourceState represents the current state of a resource.
@@ -73,18 +75,19 @@ type HealthState struct {
 
 // ResourceStatus is the status of a single resource.
 type ResourceStatus struct {
-	Name       string        `json:"name"`
-	Type       ResourceType  `json:"type"`
-	State      ResourceState `json:"state"`
-	PID        int           `json:"pid,omitempty"`
-	UptimeSecs int64         `json:"uptime_secs,omitempty"`
-	StartedAt  time.Time     `json:"started_at,omitempty"`
-	ExitCode   int           `json:"exit_code,omitempty"`
-	LastError  string        `json:"last_error,omitempty"`
-	ConfigHash string        `json:"config_hash"`
-	Health     *HealthState  `json:"health,omitempty"`
-	Ports      []string      `json:"ports,omitempty"`
-	DependsOn  []string      `json:"depends_on,omitempty"`
+	Name       string                 `json:"name"`
+	Type       ResourceType           `json:"type"`
+	State      ResourceState          `json:"state"`
+	PID        int                    `json:"pid,omitempty"`
+	UptimeSecs int64                  `json:"uptime_secs,omitempty"`
+	StartedAt  time.Time              `json:"started_at,omitempty"`
+	ExitCode   int                    `json:"exit_code,omitempty"`
+	LastError  string                 `json:"last_error,omitempty"`
+	ConfigHash string                 `json:"config_hash"`
+	Health     *HealthState           `json:"health,omitempty"`
+	Ports      []string               `json:"ports,omitempty"`
+	DependsOn  []string               `json:"depends_on,omitempty"`
+	Stats      *runtime.ContainerStats `json:"stats,omitempty"`
 }
 
 // ScheduleStatus tracks schedule state.
@@ -132,6 +135,15 @@ func (s *SharedState) GetResource(name string) (*ResourceStatus, bool) {
 	}
 	copy := *rs
 	return &copy, true
+}
+
+// UpdateStats updates the stats for a running container resource.
+func (s *SharedState) UpdateStats(name string, stats *runtime.ContainerStats) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rs, ok := s.Resources[name]; ok {
+		rs.Stats = stats
+	}
 }
 
 // RemoveResource deletes a resource from state.

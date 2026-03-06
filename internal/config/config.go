@@ -21,10 +21,17 @@ type Config struct {
 	Paths      PathsConfig                `yaml:"paths"`
 	Daemon     DaemonConfig               `yaml:"daemon"`
 	DNS        DNSConfig                  `yaml:"dns"`
+	Networks   map[string]NetworkConfig   `yaml:"networks,omitempty"`
 	Services   map[string]ServiceConfig   `yaml:"services"`
 	Containers map[string]ContainerConfig `yaml:"containers"`
 	Schedules  map[string]ScheduleConfig  `yaml:"schedules"`
 	Proxy      *ProxyConfig               `yaml:"proxy,omitempty"`
+}
+
+// NetworkConfig defines a named container network.
+type NetworkConfig struct {
+	Subnet   string `yaml:"subnet,omitempty"`
+	Internal bool   `yaml:"internal,omitempty"`
 }
 
 type PathsConfig struct {
@@ -72,6 +79,10 @@ type ContainerConfig struct {
 	Ports       []string           `yaml:"ports"`
 	CPUs        float64            `yaml:"cpus,omitempty"`
 	Memory      string             `yaml:"memory,omitempty"`
+	Labels      map[string]string  `yaml:"labels,omitempty"`
+	Init        bool               `yaml:"init,omitempty"`
+	ReadOnly    bool               `yaml:"read_only,omitempty"`
+	Network     string             `yaml:"network,omitempty"`
 	HealthCheck *HealthCheckConfig `yaml:"health_check,omitempty"`
 	DependsOn   []string           `yaml:"depends_on,omitempty"`
 }
@@ -281,6 +292,22 @@ func validate(cfg *Config) error {
 			parts := strings.SplitN(v, ":", 2)
 			if len(parts) == 2 && strings.Contains(parts[0], "..") {
 				return fmt.Errorf("container %q: volume source path must not contain '..'", name)
+			}
+		}
+		for k, v := range c.Labels {
+			if k == "" || v == "" {
+				return fmt.Errorf("container %q: label keys and values must not be empty", name)
+			}
+			if strings.HasPrefix(k, "plane.") {
+				return fmt.Errorf("container %q: label key %q is reserved (plane.* prefix)", name, k)
+			}
+		}
+		if c.Network != "" && c.Network != "host" {
+			if cfg.Networks == nil {
+				return fmt.Errorf("container %q: network %q not defined in networks section", name, c.Network)
+			}
+			if _, ok := cfg.Networks[c.Network]; !ok {
+				return fmt.Errorf("container %q: network %q not defined in networks section", name, c.Network)
 			}
 		}
 		if err := validateHealthCheck(name, c.HealthCheck); err != nil {

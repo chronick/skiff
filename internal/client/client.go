@@ -33,6 +33,14 @@ type ResourceInfo struct {
 	Health     *HealthInfo `json:"health,omitempty"`
 	Ports      []string    `json:"ports,omitempty"`
 	DependsOn  []string    `json:"depends_on,omitempty"`
+	Stats      *StatsInfo  `json:"stats,omitempty"`
+}
+
+type StatsInfo struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemUsageMB int64   `json:"mem_usage_mb"`
+	MemLimitMB int64   `json:"mem_limit_mb"`
+	PIDs       int     `json:"pids"`
 }
 
 type HealthInfo struct {
@@ -190,4 +198,33 @@ func (c *Client) Down(names []string) (*ActionResult, error) {
 func (c *Client) Restart(name string) error {
 	_, err := c.call("POST", "/v1/restart/"+name, nil)
 	return err
+}
+
+func (c *Client) Stats() ([]StatsEntry, error) {
+	data, err := c.call("GET", "/v1/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var entries []StatsEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+type StatsEntry struct {
+	Name       string  `json:"name"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemUsageMB int64   `json:"mem_usage_mb"`
+	MemLimitMB int64   `json:"mem_limit_mb"`
+	PIDs       int     `json:"pids"`
+}
+
+func (c *Client) ContainerLogs(name string, lines int) (string, error) {
+	path := fmt.Sprintf("/v1/logs/%s?lines=%d&source=container", name, lines)
+	data, err := c.call("GET", path, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

@@ -10,7 +10,7 @@ paths:
   state_file: /tmp/plane-test/plane-state.json
 
 daemon:
-  status_poll_interval_secs: 5
+  status_poll_interval_secs: 30
   log_buffer_lines: 500
   config_watch: false
   shutdown_timeout_secs: 10

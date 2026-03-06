@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/chronick/plane/internal/runner"
 )
@@ -12,10 +15,10 @@ import (
 // AppleRuntime implements ContainerRuntime using the Apple Container CLI
 // (https://apple.github.io/container/documentation/).
 type AppleRuntime struct {
-	runner runner.ProcessRunner
-	binary string
-	logger *slog.Logger
-	dnsIP  string
+	runner  runner.ProcessRunner
+	binary  string
+	logger  *slog.Logger
+	dnsIP   string
 	dnsPort int
 }
 
@@ -48,6 +51,36 @@ func (a *AppleRuntime) Run(ctx context.Context, name string, cfg ContainerConfig
 	}
 	if a.dnsIP != "" {
 		args = append(args, "--dns", a.dnsIP)
+	}
+
+	// Labels: always inject plane system labels, then user labels
+	labels := map[string]string{
+		"plane.managed":  "true",
+		"plane.resource": name,
+	}
+	for k, v := range cfg.Labels {
+		if !strings.HasPrefix(k, "plane.") {
+			labels[k] = v
+		}
+	}
+	// Sort keys for deterministic flag order
+	labelKeys := make([]string, 0, len(labels))
+	for k := range labels {
+		labelKeys = append(labelKeys, k)
+	}
+	sort.Strings(labelKeys)
+	for _, k := range labelKeys {
+		args = append(args, "--label", fmt.Sprintf("%s=%s", k, labels[k]))
+	}
+
+	if cfg.Init {
+		args = append(args, "--init")
+	}
+	if cfg.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	if cfg.Network != "" {
+		args = append(args, "--network", cfg.Network)
 	}
 
 	args = append(args, cfg.Image)
@@ -164,4 +197,80 @@ func (a *AppleRuntime) SetLimits(cfg ContainerConfig, limits ResourceLimits) Con
 		cfg.Memory = limits.Memory
 	}
 	return cfg
+}
+
+// statsEntry matches the JSON output of `container stats --format json --no-stream`.
+type statsEntry struct {
+	CPUPercentage    float64 `json:"cpu_percentage"`
+	MemoryUsage      int64   `json:"memory_usage"`
+	MemoryLimit      int64   `json:"memory_limit"`
+	PIDs             int     `json:"pids"`
+}
+
+func (a *AppleRuntime) Stats(ctx context.Context, name string) (*ContainerStats, error) {
+	out, err := a.runner.Run(ctx, a.binary, []string{"stats", name, "--format", "json", "--no-stream"}, runner.RunOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("container stats: %w: %s", err, string(out))
+	}
+
+	var entry statsEntry
+	if err := json.Unmarshal(out, &entry); err != nil {
+		return nil, fmt.Errorf("parsing stats: %w", err)
+	}
+
+	return &ContainerStats{
+		CPUPercent: entry.CPUPercentage,
+		MemUsageMB: entry.MemoryUsage / (1024 * 1024),
+		MemLimitMB: entry.MemoryLimit / (1024 * 1024),
+		PIDs:       entry.PIDs,
+	}, nil
+}
+
+func (a *AppleRuntime) Logs(ctx context.Context, name string, lines int) ([]byte, error) {
+	args := []string{"logs"}
+	if lines > 0 {
+		args = append(args, "-n", strconv.Itoa(lines))
+	}
+	args = append(args, name)
+
+	out, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("container logs: %w: %s", err, string(out))
+	}
+	return out, nil
+}
+
+func (a *AppleRuntime) CreateNetwork(ctx context.Context, name string, cfg NetworkConfig) error {
+	args := []string{"network", "create", name}
+	if cfg.Subnet != "" {
+		args = append(args, "--subnet", cfg.Subnet)
+	}
+	if cfg.Internal {
+		args = append(args, "--internal")
+	}
+
+	a.logger.Info("creating network", "name", name)
+	out, err := a.runner.Run(ctx, a.binary, args, runner.RunOpts{})
+	if err != nil {
+		// Treat "already exists" as idempotent success
+		if strings.Contains(string(out), "already exists") {
+			a.logger.Debug("network already exists", "name", name)
+			return nil
+		}
+		return fmt.Errorf("network create: %w: %s", err, string(out))
+	}
+	return nil
+}
+
+func (a *AppleRuntime) DeleteNetwork(ctx context.Context, name string) error {
+	a.logger.Info("deleting network", "name", name)
+	out, err := a.runner.Run(ctx, a.binary, []string{"network", "delete", name}, runner.RunOpts{})
+	if err != nil {
+		// Treat "not found" as idempotent success
+		if strings.Contains(string(out), "not found") {
+			return nil
+		}
+		return fmt.Errorf("network delete: %w: %s", err, string(out))
+	}
+	return nil
 }

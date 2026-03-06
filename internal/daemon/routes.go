@@ -34,6 +34,10 @@ func (d *Daemon) setupRoutes() *http.ServeMux {
 	// Logs
 	mux.HandleFunc("GET /v1/logs/{name}", d.handleLogs)
 
+	// Stats
+	mux.HandleFunc("GET /v1/stats", d.handleStats)
+	mux.HandleFunc("GET /v1/stats/{name}", d.handleStatsByName)
+
 	// Health
 	mux.HandleFunc("GET /v1/health", d.handleHealth)
 
@@ -135,7 +139,7 @@ func (d *Daemon) handleUp(w http.ResponseWriter, r *http.Request) {
 			if rs != nil && rs.State == status.StateRunning {
 				_ = d.runtime.Stop(ctx, name)
 			}
-			rtCfg := containerToRuntimeConfig(cCfg)
+			rtCfg := containerToRuntimeConfig(name, cCfg)
 			if err := d.runtime.Run(ctx, name, rtCfg); err != nil {
 				errors[name] = err.Error()
 			} else {
@@ -303,7 +307,7 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 					d.health.StartProbe(ctx, a.Resource, svcCfg.HealthCheck)
 				}
 			} else if cCfg, ok := d.cfg.Containers[a.Resource]; ok {
-				rtCfg := containerToRuntimeConfig(cCfg)
+				rtCfg := containerToRuntimeConfig(a.Resource, cCfg)
 				_ = d.runtime.Run(ctx, a.Resource, rtCfg)
 				d.state.SetResource(&status.ResourceStatus{
 					Name:       a.Resource,
@@ -327,7 +331,7 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 				}
 			} else if cCfg, ok := d.cfg.Containers[a.Resource]; ok {
 				_ = d.runtime.Stop(ctx, a.Resource)
-				rtCfg := containerToRuntimeConfig(cCfg)
+				rtCfg := containerToRuntimeConfig(a.Resource, cCfg)
 				_ = d.runtime.Run(ctx, a.Resource, rtCfg)
 				d.state.SetResource(&status.ResourceStatus{
 					Name:       a.Resource,
@@ -363,7 +367,7 @@ func (d *Daemon) handleRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	if cCfg, ok := d.cfg.Containers[name]; ok {
 		_ = d.runtime.Stop(ctx, name)
-		rtCfg := containerToRuntimeConfig(cCfg)
+		rtCfg := containerToRuntimeConfig(name, cCfg)
 		if err := d.runtime.Run(ctx, name, rtCfg); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -398,7 +402,7 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rtCfg := containerToRuntimeConfig(cCfg)
+	rtCfg := containerToRuntimeConfig(body.Name, cCfg)
 	ephemeralName := fmt.Sprintf("%s-run-%d", body.Name, time.Now().Unix())
 
 	if err := d.runtime.Run(r.Context(), ephemeralName, rtCfg); err != nil {
@@ -440,7 +444,7 @@ func (d *Daemon) handleBuild(w http.ResponseWriter, r *http.Request) {
 			errors[name] = "no dockerfile specified"
 			continue
 		}
-		rtCfg := containerToRuntimeConfig(cCfg)
+		rtCfg := containerToRuntimeConfig(name, cCfg)
 		if err := d.runtime.Build(ctx, name, rtCfg); err != nil {
 			errors[name] = err.Error()
 		} else {
@@ -496,6 +500,7 @@ func (d *Daemon) handleRunNow(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	level := r.URL.Query().Get("level")
+	source := r.URL.Query().Get("source")
 
 	n := 100
 	if nStr := r.URL.Query().Get("lines"); nStr != "" {
@@ -511,8 +516,67 @@ func (d *Daemon) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// On-demand container logs: bypass ring buffer
+	if source == "container" && cOk {
+		out, err := d.runtime.Logs(r.Context(), name, n)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(out)
+		return
+	}
+
 	entries := d.logs.Lines(name, n, level)
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func (d *Daemon) handleStats(w http.ResponseWriter, r *http.Request) {
+	type statsEntry struct {
+		Name       string  `json:"name"`
+		CPUPercent float64 `json:"cpu_percent"`
+		MemUsageMB int64   `json:"mem_usage_mb"`
+		MemLimitMB int64   `json:"mem_limit_mb"`
+		PIDs       int     `json:"pids"`
+	}
+
+	var result []statsEntry
+	for name := range d.cfg.Containers {
+		rs, ok := d.state.GetResource(name)
+		if !ok || rs.State != status.StateRunning {
+			continue
+		}
+		if rs.Stats != nil {
+			result = append(result, statsEntry{
+				Name:       name,
+				CPUPercent: rs.Stats.CPUPercent,
+				MemUsageMB: rs.Stats.MemUsageMB,
+				MemLimitMB: rs.Stats.MemLimitMB,
+				PIDs:       rs.Stats.PIDs,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (d *Daemon) handleStatsByName(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, ok := d.cfg.Containers[name]; !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("container %q not found", name)})
+		return
+	}
+	rs, ok := d.state.GetResource(name)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("container %q not running", name)})
+		return
+	}
+	if rs.Stats == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "no stats available yet"})
+		return
+	}
+	writeJSON(w, http.StatusOK, rs.Stats)
 }
 
 func writeJSON(w http.ResponseWriter, code int, data interface{}) {

@@ -59,6 +59,7 @@ func main() {
 		killCmd(),
 		psCmd(),
 		statusCmd(),
+		statsCmd(),
 		applyCmd(),
 		restartCmd(),
 		buildCmd(),
@@ -233,6 +234,7 @@ func killCmd() *cobra.Command {
 
 func psCmd() *cobra.Command {
 	var jsonOutput bool
+	var showStats bool
 	cmd := &cobra.Command{
 		Use:   "ps",
 		Short: "Show status of all resources",
@@ -247,10 +249,11 @@ func psCmd() *cobra.Command {
 				return nil
 			}
 
-			return printStatusTable(resp)
+			return printStatusTable(resp, showStats)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	cmd.Flags().BoolVar(&showStats, "stats", false, "show CPU/memory stats for containers")
 	return cmd
 }
 
@@ -268,7 +271,84 @@ func statusCmd() *cobra.Command {
 				fmt.Println(string(resp))
 				return nil
 			}
-			return printStatusTable(resp)
+			return printStatusTable(resp, false)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
+	return cmd
+}
+
+func statsCmd() *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "stats [name]",
+		Short: "Show container CPU/memory stats",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var path string
+			if len(args) > 0 {
+				path = "/v1/stats/" + args[0]
+			} else {
+				path = "/v1/stats"
+			}
+
+			resp, err := apiCall("GET", path, nil)
+			if err != nil {
+				return err
+			}
+
+			if jsonOutput {
+				fmt.Println(string(resp))
+				return nil
+			}
+
+			if len(args) > 0 {
+				// Single container stats
+				var s struct {
+					CPUPercent float64 `json:"cpu_percent"`
+					MemUsageMB int64   `json:"mem_usage_mb"`
+					MemLimitMB int64   `json:"mem_limit_mb"`
+					PIDs       int     `json:"pids"`
+					Status     string  `json:"status,omitempty"`
+				}
+				if err := json.Unmarshal(resp, &s); err != nil {
+					fmt.Println(string(resp))
+					return nil
+				}
+				if s.Status != "" {
+					fmt.Println(s.Status)
+					return nil
+				}
+				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(tw, "NAME\tCPU%\tMEM USAGE/LIMIT\tPIDS")
+				fmt.Fprintf(tw, "%s\t%.1f%%\t%dMB/%dMB\t%d\n", args[0], s.CPUPercent, s.MemUsageMB, s.MemLimitMB, s.PIDs)
+				tw.Flush()
+				return nil
+			}
+
+			// All container stats
+			var stats []struct {
+				Name       string  `json:"name"`
+				CPUPercent float64 `json:"cpu_percent"`
+				MemUsageMB int64   `json:"mem_usage_mb"`
+				MemLimitMB int64   `json:"mem_limit_mb"`
+				PIDs       int     `json:"pids"`
+			}
+			if err := json.Unmarshal(resp, &stats); err != nil {
+				fmt.Println(string(resp))
+				return nil
+			}
+			if len(stats) == 0 {
+				fmt.Println("No container stats available")
+				return nil
+			}
+
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tCPU%\tMEM USAGE/LIMIT\tPIDS")
+			for _, s := range stats {
+				fmt.Fprintf(tw, "%s\t%.1f%%\t%dMB/%dMB\t%d\n", s.Name, s.CPUPercent, s.MemUsageMB, s.MemLimitMB, s.PIDs)
+			}
+			tw.Flush()
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
@@ -782,18 +862,24 @@ func daemonizeProcess(cfg *config.Config) error {
 	return nil
 }
 
-func printStatusTable(data []byte) error {
+func printStatusTable(data []byte, showStats bool) error {
 	var snapshot struct {
 		Resources []struct {
-			Name      string `json:"name"`
-			Type      string `json:"type"`
-			State     string `json:"state"`
-			PID       int    `json:"pid"`
-			Uptime    int64  `json:"uptime_secs"`
-			Ports     []string `json:"ports"`
-			Health    *struct {
+			Name   string `json:"name"`
+			Type   string `json:"type"`
+			State  string `json:"state"`
+			PID    int    `json:"pid"`
+			Uptime int64  `json:"uptime_secs"`
+			Ports  []string `json:"ports"`
+			Health *struct {
 				Status string `json:"status"`
 			} `json:"health"`
+			Stats *struct {
+				CPUPercent float64 `json:"cpu_percent"`
+				MemUsageMB int64   `json:"mem_usage_mb"`
+				MemLimitMB int64   `json:"mem_limit_mb"`
+				PIDs       int     `json:"pids"`
+			} `json:"stats"`
 		} `json:"resources"`
 		Schedules []struct {
 			Name       string `json:"name"`
@@ -811,7 +897,11 @@ func printStatusTable(data []byte) error {
 	if len(snapshot.Resources) > 0 {
 		bold.Println("Resources:")
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tTYPE\tSTATE\tPID\tUPTIME\tHEALTH\tPORTS")
+		if showStats {
+			fmt.Fprintln(tw, "NAME\tTYPE\tSTATE\tPID\tUPTIME\tHEALTH\tCPU%\tMEM\tPORTS")
+		} else {
+			fmt.Fprintln(tw, "NAME\tTYPE\tSTATE\tPID\tUPTIME\tHEALTH\tPORTS")
+		}
 
 		for _, r := range snapshot.Resources {
 			healthStr := "-"
@@ -830,7 +920,17 @@ func printStatusTable(data []byte) error {
 			if portsStr == "" {
 				portsStr = "-"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Type, r.State, pidStr, uptimeStr, healthStr, portsStr)
+			if showStats {
+				cpuStr := "-"
+				memStr := "-"
+				if r.Stats != nil {
+					cpuStr = fmt.Sprintf("%.1f%%", r.Stats.CPUPercent)
+					memStr = fmt.Sprintf("%dMB/%dMB", r.Stats.MemUsageMB, r.Stats.MemLimitMB)
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Type, r.State, pidStr, uptimeStr, healthStr, cpuStr, memStr, portsStr)
+			} else {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Name, r.Type, r.State, pidStr, uptimeStr, healthStr, portsStr)
+			}
 		}
 		tw.Flush()
 	}

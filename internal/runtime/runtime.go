@@ -20,6 +20,14 @@ type ContainerRuntime interface {
 	InjectDNS(cfg ContainerConfig, dnsIP string, dnsPort int) ContainerConfig
 	// SetLimits applies resource limits to a container config.
 	SetLimits(cfg ContainerConfig, limits ResourceLimits) ContainerConfig
+	// Stats returns live CPU/memory metrics for a container.
+	Stats(ctx context.Context, name string) (*ContainerStats, error)
+	// Logs returns the last n lines of container stdout/stderr.
+	Logs(ctx context.Context, name string, lines int) ([]byte, error)
+	// CreateNetwork creates a named container network.
+	CreateNetwork(ctx context.Context, name string, cfg NetworkConfig) error
+	// DeleteNetwork deletes a named container network.
+	DeleteNetwork(ctx context.Context, name string) error
 }
 
 // ContainerConfig holds container start parameters.
@@ -32,6 +40,10 @@ type ContainerConfig struct {
 	Ports      []string
 	CPUs       float64
 	Memory     string
+	Labels     map[string]string
+	Init       bool
+	ReadOnly   bool
+	Network    string
 }
 
 // ContainerInfo is the status of a container.
@@ -46,4 +58,18 @@ type ContainerInfo struct {
 type ResourceLimits struct {
 	CPUs   float64 // e.g., 1.5 = 1.5 cores
 	Memory string  // e.g., "512m", "2g"
+}
+
+// ContainerStats holds live container metrics.
+type ContainerStats struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemUsageMB int64   `json:"mem_usage_mb"`
+	MemLimitMB int64   `json:"mem_limit_mb"`
+	PIDs       int     `json:"pids"`
+}
+
+// NetworkConfig holds network creation parameters.
+type NetworkConfig struct {
+	Subnet   string
+	Internal bool
 }
