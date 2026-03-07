@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // Config is the top-level skiff.yml structure.
 type Config struct {

@@ -134,6 +134,42 @@ services:
 	}
 }
 
+func TestDottedNames(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  core.gangway:
+    command: ["gangway", "--socket", "/tmp/gangway.sock"]
+  comms.openclaw:
+    command: ["openclaw", "gateway", "start"]
+containers:
+  obs.lookout:
+    image: ghcr.io/chronick/lookout-go:latest
+schedules:
+  auto.morning-digest:
+    command: ["echo", "morning"]
+    working_dir: /tmp
+    interval_seconds: 3600
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("dotted names should be valid: %v", err)
+	}
+
+	if len(cfg.Services) != 2 {
+		t.Errorf("expected 2 services, got %d", len(cfg.Services))
+	}
+	if len(cfg.Containers) != 1 {
+		t.Errorf("expected 1 container, got %d", len(cfg.Containers))
+	}
+	if len(cfg.Schedules) != 1 {
+		t.Errorf("expected 1 schedule, got %d", len(cfg.Schedules))
+	}
+}
+
 func TestDependencyCycleDetection(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "skiff.yml")
