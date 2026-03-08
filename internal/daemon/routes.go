@@ -31,6 +31,10 @@ func (d *Daemon) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/exec/{name}", d.handleExec)
 	mux.HandleFunc("POST /v1/schedule/{name}/run-now", d.handleRunNow)
 
+	// Ad-hoc container routes
+	mux.HandleFunc("POST /v1/containers/run", d.handleContainerRun)
+	mux.HandleFunc("POST /v1/containers/{name}/stop", d.handleContainerStop)
+
 	// Logs
 	mux.HandleFunc("GET /v1/logs/{name}", d.handleLogs)
 
@@ -70,6 +74,11 @@ func (d *Daemon) handleServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleContainers(w http.ResponseWriter, r *http.Request) {
+	parent := r.URL.Query().Get("parent")
+	if parent != "" {
+		writeJSON(w, http.StatusOK, d.state.ResourcesByLabel("skiff.parent", parent))
+		return
+	}
 	writeJSON(w, http.StatusOK, d.state.ResourcesByType(status.TypeContainer))
 }
 
@@ -222,6 +231,9 @@ func (d *Daemon) handleDown(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+
+		// Stop any ad-hoc children of this resource
+		d.adhoc.StopChildren(name)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -461,7 +473,9 @@ func (d *Daemon) handleBuild(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleExec(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	if _, ok := d.cfg.Containers[name]; !ok {
+	_, inConfig := d.cfg.Containers[name]
+	_, inState := d.state.GetResource(name)
+	if !inConfig && !inState {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("container %q not found", name)})
 		return
 	}
@@ -507,17 +521,18 @@ func (d *Daemon) handleLogs(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(nStr, "%d", &n)
 	}
 
-	// Validate name exists
+	// Validate name exists (in config or as ad-hoc container in state)
 	_, svcOk := d.cfg.Services[name]
 	_, cOk := d.cfg.Containers[name]
 	_, schedOk := d.cfg.Schedules[name]
-	if !svcOk && !cOk && !schedOk {
+	_, stateOk := d.state.GetResource(name)
+	if !svcOk && !cOk && !schedOk && !stateOk {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("resource %q not found", name)})
 		return
 	}
 
 	// On-demand container logs: bypass ring buffer
-	if source == "container" && cOk {
+	if source == "container" && (cOk || stateOk) {
 		out, err := d.runtime.Logs(r.Context(), name, n)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -563,12 +578,13 @@ func (d *Daemon) handleStats(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleStatsByName(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if _, ok := d.cfg.Containers[name]; !ok {
+	_, inConfig := d.cfg.Containers[name]
+	rs, inState := d.state.GetResource(name)
+	if !inConfig && !inState {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("container %q not found", name)})
 		return
 	}
-	rs, ok := d.state.GetResource(name)
-	if !ok {
+	if !inState {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("container %q not running", name)})
 		return
 	}

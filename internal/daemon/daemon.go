@@ -35,6 +35,7 @@ type Daemon struct {
 	runtime    runtime.ContainerRuntime
 	dns        *dns.ServiceDNS
 	runner     runner.ProcessRunner
+	adhoc      *AdhocTracker
 	logger     *slog.Logger
 	server     *http.Server
 	tcpServer  *http.Server
@@ -69,6 +70,8 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 		dnsServer.SetUpstream(dns.DetectUpstream())
 	}
 
+	adhocTracker := NewAdhocTracker(state, rt, logger)
+
 	d := &Daemon{
 		cfg:        cfg,
 		state:      state,
@@ -79,6 +82,7 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 		runtime:    rt,
 		dns:        dnsServer,
 		runner:     r,
+		adhoc:      adhocTracker,
 		logger:     logger,
 		logOffsets: make(map[string]int),
 		prevStats:  make(map[string]prevStatsSample),
@@ -169,6 +173,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Start log poller
 	go d.logPoller(sigCtx)
+
+	// Start ad-hoc container exit poller
+	go d.adhocExitPoller(sigCtx)
 
 	// Start HTTP server on unix socket
 	mux := d.setupRoutes()
@@ -310,6 +317,9 @@ func (d *Daemon) shutdown() error {
 	// Stop supervisor (native services)
 	d.supervisor.StopAll()
 
+	// Stop ad-hoc containers
+	d.adhoc.StopAll()
+
 	// Stop containers
 	for name := range d.cfg.Containers {
 		d.logger.Info("stopping container", "name", name)
@@ -416,6 +426,22 @@ func (d *Daemon) statsPoller(ctx context.Context) {
 
 				d.state.UpdateStats(name, stats)
 			}
+		}
+	}
+}
+
+// adhocExitPoller periodically checks for exited ad-hoc containers and
+// handles auto-remove and parent-child cleanup.
+func (d *Daemon) adhocExitPoller(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.adhoc.PollExited()
 		}
 	}
 }

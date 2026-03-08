@@ -87,6 +87,7 @@ type ResourceStatus struct {
 	Health     *HealthState           `json:"health,omitempty"`
 	Ports      []string               `json:"ports,omitempty"`
 	DependsOn  []string               `json:"depends_on,omitempty"`
+	Labels     map[string]string      `json:"labels,omitempty"`
 	Stats      *runtime.ContainerStats `json:"stats,omitempty"`
 }
 
@@ -208,6 +209,21 @@ func (s *SharedState) ResourcesByType(t ResourceType) []*ResourceStatus {
 	var result []*ResourceStatus
 	for _, rs := range s.Resources {
 		if rs.Type == t {
+			copy := *rs
+			result = append(result, &copy)
+		}
+	}
+	return result
+}
+
+// ResourcesByLabel returns all resources matching a label key=value pair.
+func (s *SharedState) ResourcesByLabel(key, value string) []*ResourceStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*ResourceStatus
+	for _, rs := range s.Resources {
+		if rs.Labels != nil && rs.Labels[key] == value {
 			copy := *rs
 			result = append(result, &copy)
 		}

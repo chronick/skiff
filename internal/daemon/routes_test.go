@@ -45,6 +45,8 @@ func newTestDaemon(cfg *config.Config) (*Daemon, *testutil.MockContainerRuntime)
 	sched := scheduler.New(state, logs, "/tmp/skiff-test-sched.json", logger)
 	hc := health.NewChecker(state, logs, r, logger)
 
+	adhocTracker := NewAdhocTracker(state, mockRT, logger)
+
 	d := &Daemon{
 		cfg:        cfg,
 		state:      state,
@@ -53,6 +55,7 @@ func newTestDaemon(cfg *config.Config) (*Daemon, *testutil.MockContainerRuntime)
 		scheduler:  sched,
 		health:     hc,
 		runtime:    mockRT,
+		adhoc:      adhocTracker,
 		runner:     r,
 		logger:     logger,
 		logOffsets: make(map[string]int),
