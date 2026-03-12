@@ -145,9 +145,10 @@ func (d *Daemon) handleUp(w http.ResponseWriter, r *http.Request) {
 			if rs != nil && rs.State == status.StateRunning && rs.ConfigHash == newHash {
 				continue // unchanged
 			}
-			if rs != nil && rs.State == status.StateRunning {
-				_ = d.runtime.Stop(ctx, name)
-			}
+			// Always stop/remove before re-running, regardless of state.
+			// Handles running containers that need config updates and
+			// leftover stopped/failed containers from previous daemon runs.
+			_ = d.runtime.Stop(ctx, name)
 			rtCfg := containerToRuntimeConfig(name, cCfg)
 			if err := d.runtime.Run(ctx, name, rtCfg); err != nil {
 				errors[name] = err.Error()

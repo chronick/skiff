@@ -32,6 +32,9 @@ func NewAppleRuntime(r runner.ProcessRunner, logger *slog.Logger) *AppleRuntime 
 }
 
 func (a *AppleRuntime) Run(ctx context.Context, name string, cfg ContainerConfig) error {
+	// Remove any leftover container with the same name (stopped, failed, etc.)
+	_, _ = a.runner.Run(ctx, a.binary, []string{"rm", "-f", name}, runner.RunOpts{})
+
 	args := []string{"run", "--name", name, "-d"}
 
 	for _, v := range cfg.Volumes {
@@ -102,6 +105,12 @@ func (a *AppleRuntime) Stop(ctx context.Context, name string) error {
 		if err2 != nil {
 			return fmt.Errorf("container stop/delete: %w: %s / %s", err, string(out), string(out2))
 		}
+		return nil
+	}
+	// Remove the stopped container so the name can be reused
+	out, err = a.runner.Run(ctx, a.binary, []string{"rm", name}, runner.RunOpts{})
+	if err != nil {
+		a.logger.Debug("rm after stop failed", "name", name, "error", err, "output", string(out))
 	}
 	return nil
 }

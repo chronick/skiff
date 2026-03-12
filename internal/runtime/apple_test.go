@@ -27,9 +27,15 @@ func TestRun_BasicFlags(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if runner.CallCount() != 1 {
-		t.Fatalf("expected 1 call, got %d", runner.CallCount())
+	if runner.CallCount() != 2 {
+		t.Fatalf("expected 2 calls (rm + run), got %d", runner.CallCount())
 	}
+	// First call: preemptive rm
+	rmCall := runner.Calls[0]
+	if rmCall.Args[0] != "rm" {
+		t.Errorf("expected rm as first call, got: %v", rmCall.Args)
+	}
+	// Second call: run
 	call, _ := runner.LastCall()
 	if call.Name != "container" {
 		t.Errorf("expected binary 'container', got %q", call.Name)
@@ -192,11 +198,16 @@ func TestStop_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	call, _ := runner.LastCall()
-	expected := "container stop web"
-	got := call.Name + " " + strings.Join(call.Args, " ")
-	if got != expected {
-		t.Errorf("expected %q, got %q", expected, got)
+	if runner.CallCount() != 2 {
+		t.Fatalf("expected 2 calls (stop + rm), got %d", runner.CallCount())
+	}
+	stopCall := runner.Calls[0]
+	if stopCall.Args[0] != "stop" {
+		t.Errorf("expected stop as first call, got: %v", stopCall.Args)
+	}
+	rmCall := runner.Calls[1]
+	if rmCall.Args[0] != "rm" {
+		t.Errorf("expected rm as second call, got: %v", rmCall.Args)
 	}
 }
 
