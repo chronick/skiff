@@ -1,9 +1,11 @@
 .PHONY: build test test-cover test-cover-html clean install uninstall
 
 PREFIX ?= /usr/local
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS = -s -w -X main.version=$(VERSION)
 
 build:
-	go build -o skiff ./cmd/skiff
+	go build -ldflags="$(LDFLAGS)" -o skiff ./cmd/skiff
 	go build -o skiff-menu ./cmd/skiff-menu
 
 install: build

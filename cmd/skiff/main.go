@@ -28,6 +28,7 @@ import (
 )
 
 var (
+	version    = "dev"
 	configPath string
 	bold       = color.New(color.Bold)
 	green      = color.New(color.FgGreen)
@@ -72,6 +73,8 @@ func main() {
 		configCmd(),
 		initCmd(),
 		tuiCmd(),
+		versionCmd(),
+		upgradeCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
@@ -999,4 +1002,116 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print skiff version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(version)
+		},
+	}
+}
+
+func upgradeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "upgrade",
+		Short: "Download and install the latest release from GitHub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			goos := os.Getenv("GOOS")
+			if goos == "" {
+				// Detect at runtime
+				out, err := exec.Command("uname", "-s").Output()
+				if err != nil {
+					return fmt.Errorf("detecting OS: %w", err)
+				}
+				goos = strings.ToLower(strings.TrimSpace(string(out)))
+			}
+			goarch := os.Getenv("GOARCH")
+			if goarch == "" {
+				out, err := exec.Command("uname", "-m").Output()
+				if err != nil {
+					return fmt.Errorf("detecting arch: %w", err)
+				}
+				arch := strings.TrimSpace(string(out))
+				switch arch {
+				case "arm64", "aarch64":
+					goarch = "arm64"
+				case "x86_64":
+					goarch = "amd64"
+				default:
+					goarch = arch
+				}
+			}
+
+			asset := fmt.Sprintf("skiff-%s-%s", goos, goarch)
+			fmt.Printf("Downloading %s...\n", asset)
+
+			tmpDir, err := os.MkdirTemp("", "skiff-upgrade-*")
+			if err != nil {
+				return fmt.Errorf("creating temp dir: %w", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			tmpBin := filepath.Join(tmpDir, "skiff")
+			dlCmd := exec.Command("gh", "release", "download", "--repo", "chronick/skiff", "--pattern", asset, "--output", tmpBin)
+			dlCmd.Stdout = os.Stdout
+			dlCmd.Stderr = os.Stderr
+			if err := dlCmd.Run(); err != nil {
+				return fmt.Errorf("downloading release (is gh CLI installed?): %w", err)
+			}
+
+			if err := os.Chmod(tmpBin, 0755); err != nil {
+				return fmt.Errorf("chmod: %w", err)
+			}
+
+			// Check downloaded version
+			out, err := exec.Command(tmpBin, "version").Output()
+			if err != nil {
+				return fmt.Errorf("checking downloaded version: %w", err)
+			}
+			newVersion := strings.TrimSpace(string(out))
+			fmt.Printf("Current: %s → New: %s\n", version, newVersion)
+
+			// Replace the current binary
+			currentBin, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("finding current binary: %w", err)
+			}
+			currentBin, err = filepath.EvalSymlinks(currentBin)
+			if err != nil {
+				return fmt.Errorf("resolving symlinks: %w", err)
+			}
+
+			// Atomic replace: copy to temp next to target, then rename
+			stagePath := currentBin + ".new"
+			src, err := os.Open(tmpBin)
+			if err != nil {
+				return err
+			}
+			dst, err := os.OpenFile(stagePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+			if err != nil {
+				src.Close()
+				return fmt.Errorf("staging new binary: %w", err)
+			}
+			if _, err := io.Copy(dst, src); err != nil {
+				src.Close()
+				dst.Close()
+				os.Remove(stagePath)
+				return err
+			}
+			src.Close()
+			dst.Close()
+
+			if err := os.Rename(stagePath, currentBin); err != nil {
+				os.Remove(stagePath)
+				return fmt.Errorf("replacing binary: %w", err)
+			}
+
+			green.Printf("  Upgraded to %s\n", newVersion)
+			fmt.Println("  Restart the daemon to use the new version: skiff restart or launchctl kickstart -k")
+			return nil
+		},
+	}
 }
