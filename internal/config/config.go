@@ -49,6 +49,7 @@ type DaemonConfig struct {
 	AuthToken              string `yaml:"auth_token,omitempty"`
 	AllowRemote            bool   `yaml:"allow_remote,omitempty"`
 	ShutdownTimeoutSecs    int    `yaml:"shutdown_timeout_secs"`
+	Runtime                string `yaml:"runtime,omitempty"` // "docker" or "apple" (default: "docker")
 }
 
 type DNSConfig struct {

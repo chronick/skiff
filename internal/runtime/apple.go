@@ -97,20 +97,21 @@ func (a *AppleRuntime) Run(ctx context.Context, name string, cfg ContainerConfig
 
 func (a *AppleRuntime) Stop(ctx context.Context, name string) error {
 	a.logger.Info("stopping container", "name", name)
+
+	// Step 1: stop the container (may fail if already stopped — that's fine)
 	out, err := a.runner.Run(ctx, a.binary, []string{"stop", name}, runner.RunOpts{})
 	if err != nil {
-		a.logger.Debug("stop failed, trying delete", "name", name, "error", err)
-		// Container may already be stopped; try delete
-		out2, err2 := a.runner.Run(ctx, a.binary, []string{"delete", name}, runner.RunOpts{})
-		if err2 != nil {
-			return fmt.Errorf("container stop/delete: %w: %s / %s", err, string(out), string(out2))
-		}
-		return nil
+		a.logger.Debug("stop failed (may already be stopped)", "name", name, "error", err)
 	}
-	// Remove the stopped container so the name can be reused
-	out, err = a.runner.Run(ctx, a.binary, []string{"rm", name}, runner.RunOpts{})
+
+	// Step 2: always remove the container ID to prevent orphans
+	out, err = a.runner.Run(ctx, a.binary, []string{"rm", "-f", name}, runner.RunOpts{})
 	if err != nil {
-		a.logger.Debug("rm after stop failed", "name", name, "error", err, "output", string(out))
+		// "not found" means already removed — treat as success
+		if strings.Contains(string(out), "not found") {
+			return nil
+		}
+		return fmt.Errorf("container rm: %w: %s", err, string(out))
 	}
 	return nil
 }

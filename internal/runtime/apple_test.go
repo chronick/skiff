@@ -199,19 +199,19 @@ func TestStop_Success(t *testing.T) {
 	}
 
 	if runner.CallCount() != 2 {
-		t.Fatalf("expected 2 calls (stop + rm), got %d", runner.CallCount())
+		t.Fatalf("expected 2 calls (stop + rm -f), got %d", runner.CallCount())
 	}
 	stopCall := runner.Calls[0]
 	if stopCall.Args[0] != "stop" {
 		t.Errorf("expected stop as first call, got: %v", stopCall.Args)
 	}
 	rmCall := runner.Calls[1]
-	if rmCall.Args[0] != "rm" {
-		t.Errorf("expected rm as second call, got: %v", rmCall.Args)
+	if rmCall.Args[0] != "rm" || rmCall.Args[1] != "-f" {
+		t.Errorf("expected 'rm -f' as second call, got: %v", rmCall.Args)
 	}
 }
 
-func TestStop_FallbackToDelete(t *testing.T) {
+func TestStop_StopFailsStillRemoves(t *testing.T) {
 	rt, runner := newTestRuntime()
 	runner.Results["container stop web"] = testutil.MockResult{Err: fmt.Errorf("not running")}
 
@@ -221,21 +221,37 @@ func TestStop_FallbackToDelete(t *testing.T) {
 	}
 
 	if runner.CallCount() != 2 {
-		t.Fatalf("expected 2 calls (stop + delete), got %d", runner.CallCount())
+		t.Fatalf("expected 2 calls (stop + rm -f), got %d", runner.CallCount())
 	}
 	call, _ := runner.LastCall()
-	if call.Args[0] != "delete" {
-		t.Errorf("expected delete as fallback, got: %v", call.Args)
+	if call.Args[0] != "rm" {
+		t.Errorf("expected rm as second call even when stop fails, got: %v", call.Args)
 	}
 }
 
-func TestStop_BothFail(t *testing.T) {
+func TestStop_RmNotFoundIsSuccess(t *testing.T) {
 	rt, runner := newTestRuntime()
-	runner.DefaultResult = testutil.MockResult{Err: fmt.Errorf("failed")}
+	runner.Results["container rm -f web"] = testutil.MockResult{
+		Output: []byte("container not found"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+
+	err := rt.Stop(context.Background(), "web")
+	if err != nil {
+		t.Fatalf("expected idempotent success for not found, got: %v", err)
+	}
+}
+
+func TestStop_RmFailsReturnsError(t *testing.T) {
+	rt, runner := newTestRuntime()
+	runner.Results["container rm -f web"] = testutil.MockResult{
+		Output: []byte("permission denied"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
 
 	err := rt.Stop(context.Background(), "web")
 	if err == nil {
-		t.Fatal("expected error when both stop and delete fail")
+		t.Fatal("expected error when rm fails with non-not-found error")
 	}
 }
 

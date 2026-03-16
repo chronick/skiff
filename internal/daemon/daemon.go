@@ -61,7 +61,14 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 	sup := supervisor.New(state, logs, cfg.Paths.Logs, logger)
 	sched := scheduler.New(state, logs, cfg.Paths.StateFile, logger)
 	hc := health.NewChecker(state, logs, r, logger)
-	rt := runtime.NewAppleRuntime(r, logger)
+
+	var rt runtime.ContainerRuntime
+	switch cfg.Daemon.Runtime {
+	case "apple":
+		rt = runtime.NewAppleRuntime(r, logger)
+	default: // "docker" or empty
+		rt = runtime.NewDockerRuntime(r, logger)
+	}
 
 	var dnsServer *dns.ServiceDNS
 	if cfg.DNS.Enabled {
