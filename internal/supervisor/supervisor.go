@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -24,12 +23,13 @@ type Supervisor struct {
 	logs      *logbuf.LogBuffer
 	logsDir   string
 	logger    *slog.Logger
+	factory   CmdFactory
 }
 
 type managedProcess struct {
 	name      string
 	cfg       config.ServiceConfig
-	cmd       *exec.Cmd
+	cmd       Cmd
 	cancel    context.CancelFunc
 	pid       int
 	restarts  int
@@ -37,21 +37,28 @@ type managedProcess struct {
 	stopping  bool
 }
 
-// New creates a Supervisor.
-func New(state *status.SharedState, logs *logbuf.LogBuffer, logsDir string, logger *slog.Logger) *Supervisor {
+// New creates a Supervisor. If factory is nil, uses real os/exec.
+func New(state *status.SharedState, logs *logbuf.LogBuffer, logsDir string, logger *slog.Logger, factory ...CmdFactory) *Supervisor {
+	var f CmdFactory
+	if len(factory) > 0 && factory[0] != nil {
+		f = factory[0]
+	} else {
+		f = newExecCmdFactory()
+	}
 	return &Supervisor{
 		processes: make(map[string]*managedProcess),
 		state:     state,
 		logs:      logs,
 		logsDir:   logsDir,
 		logger:    logger,
+		factory:   f,
 	}
 }
 
 // Start launches a service as a child process with restart policy.
 func (s *Supervisor) Start(ctx context.Context, name string, cfg config.ServiceConfig) error {
 	s.mu.Lock()
-	if p, exists := s.processes[name]; exists && p.cmd != nil && p.cmd.Process != nil && !p.stopping {
+	if p, exists := s.processes[name]; exists && p.cmd != nil && p.pid != 0 && !p.stopping {
 		s.mu.Unlock()
 		return fmt.Errorf("service %q is already running (pid %d)", name, p.pid)
 	}
@@ -80,10 +87,9 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 			DependsOn:  cfg.DependsOn,
 		})
 
-		cmd := exec.CommandContext(ctx, cfg.Command[0], cfg.Command[1:]...)
-		cmd.Dir = cfg.WorkingDir
-		cmd.Env = buildEnv(cfg.Env)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd := s.factory.Command(ctx, cfg.Command[0], cfg.Command[1:]...)
+		cmd.SetDir(cfg.WorkingDir)
+		cmd.SetEnv(buildEnv(cfg.Env))
 
 		// Set up log file
 		var logFile *os.File
@@ -97,8 +103,8 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 			if err != nil {
 				s.logger.Error("failed to open log file", "service", name, "error", err)
 			} else {
-				cmd.Stdout = logFile
-				cmd.Stderr = logFile
+				cmd.SetStdout(logFile)
+				cmd.SetStderr(logFile)
 			}
 		}
 
@@ -120,7 +126,7 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 		}
 
 		now := time.Now()
-		pid := cmd.Process.Pid
+		pid := cmd.Pid()
 		s.logger.Info("service started", "service", name, "pid", pid)
 		s.logs.Append(name, fmt.Sprintf("service started (pid %d)", pid))
 
@@ -171,8 +177,11 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 
 		exitCode := 0
 		if waitErr != nil {
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
+			type exitCoder interface{ ExitCode() int }
+			if ec, ok := waitErr.(exitCoder); ok {
+				exitCode = ec.ExitCode()
+			} else {
+				exitCode = 1 // non-zero for unknown errors
 			}
 		}
 
@@ -239,7 +248,7 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 func (s *Supervisor) Stop(name string) error {
 	s.mu.Lock()
 	proc, exists := s.processes[name]
-	if !exists || proc.cmd == nil || proc.cmd.Process == nil {
+	if !exists || proc.cmd == nil {
 		s.mu.Unlock()
 		return nil
 	}
@@ -249,12 +258,7 @@ func (s *Supervisor) Stop(name string) error {
 	s.logger.Info("stopping service", "service", name, "pid", proc.pid)
 
 	// Send SIGTERM to process group
-	pgid, err := syscall.Getpgid(proc.pid)
-	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	} else {
-		_ = proc.cmd.Process.Signal(syscall.SIGTERM)
-	}
+	_ = proc.cmd.SignalGroup(syscall.SIGTERM)
 
 	// Cancel context (which also kills the process after timeout)
 	proc.cancel()
@@ -271,20 +275,14 @@ func (s *Supervisor) Stop(name string) error {
 func (s *Supervisor) Kill(name string) error {
 	s.mu.Lock()
 	proc, exists := s.processes[name]
-	if !exists || proc.cmd == nil || proc.cmd.Process == nil {
+	if !exists || proc.cmd == nil {
 		s.mu.Unlock()
 		return nil
 	}
 	proc.stopping = true
 	s.mu.Unlock()
 
-	pgid, err := syscall.Getpgid(proc.pid)
-	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
-		_ = proc.cmd.Process.Kill()
-	}
-
+	_ = proc.cmd.Kill()
 	proc.cancel()
 
 	s.mu.Lock()
@@ -313,7 +311,7 @@ func (s *Supervisor) IsRunning(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	proc, exists := s.processes[name]
-	return exists && proc.cmd != nil && proc.cmd.Process != nil && !proc.stopping
+	return exists && proc.cmd != nil && proc.pid != 0 && !proc.stopping
 }
 
 // PID returns the PID of a managed process, or 0 if not running.

@@ -12,6 +12,7 @@ import (
 	"github.com/chronick/skiff/internal/health"
 	"github.com/chronick/skiff/internal/logbuf"
 	"github.com/chronick/skiff/internal/runner"
+	"github.com/chronick/skiff/internal/runtime"
 	"github.com/chronick/skiff/internal/scheduler"
 	"github.com/chronick/skiff/internal/status"
 	"github.com/chronick/skiff/internal/supervisor"
@@ -735,6 +736,309 @@ func TestAuthMiddleware_MissingToken(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}
+
+// --- writeJSON ---
+
+// --- Run (POST /v1/run) ---
+
+func TestHandleRun_Success(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"worker": {Image: "worker:latest"},
+		},
+	}
+	d, mockRT := newTestDaemon(cfg)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/run", map[string]interface{}{
+		"name": "worker",
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	body := decodeJSON(t, rr)
+	if body["status"] != "started" {
+		t.Errorf("expected status started, got %v", body["status"])
+	}
+
+	runs := mockRT.CallsFor("Run")
+	if len(runs) != 1 {
+		t.Errorf("expected 1 Run call, got %d", len(runs))
+	}
+}
+
+func TestHandleRun_NotFound(t *testing.T) {
+	d, _ := newTestDaemon(nil)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/run", map[string]interface{}{
+		"name": "nonexistent",
+	})
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestHandleRun_BadBody(t *testing.T) {
+	d, _ := newTestDaemon(nil)
+	mux := d.setupRoutes()
+
+	req := httptest.NewRequest("POST", "/v1/run", bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rr.Code)
+	}
+}
+
+// --- StatsByName ---
+
+func TestHandleStatsByName_WithStats(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"db": {Image: "postgres:15"},
+		},
+	}
+	d, _ := newTestDaemon(cfg)
+	d.state.SetResource(&status.ResourceStatus{
+		Name:  "db",
+		Type:  status.TypeContainer,
+		State: status.StateRunning,
+	})
+	d.state.UpdateStats("db", &runtime.ContainerStats{
+		CPUPercent: 25.5,
+		MemUsageMB: 512,
+		MemLimitMB: 1024,
+		PIDs:       10,
+	})
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "GET", "/v1/stats/db", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	body := decodeJSON(t, rr)
+	if body["cpu_percent"] != 25.5 {
+		t.Errorf("expected cpu_percent 25.5, got %v", body["cpu_percent"])
+	}
+}
+
+func TestHandleStatsByName_NoStatsYet(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"db": {Image: "postgres:15"},
+		},
+	}
+	d, _ := newTestDaemon(cfg)
+	d.state.SetResource(&status.ResourceStatus{
+		Name:  "db",
+		Type:  status.TypeContainer,
+		State: status.StateRunning,
+	})
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "GET", "/v1/stats/db", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	body := decodeJSON(t, rr)
+	if body["status"] != "no stats available yet" {
+		t.Errorf("expected 'no stats available yet', got %v", body["status"])
+	}
+}
+
+func TestHandleStatsByName_InConfigNotRunning(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"db": {Image: "postgres:15"},
+		},
+	}
+	d, _ := newTestDaemon(cfg)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "GET", "/v1/stats/db", nil)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for not-running container, got %d", rr.Code)
+	}
+}
+
+// --- Apply (execute path) ---
+
+func TestHandleApply_Execute_StartNew(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"db": {Image: "postgres:15"},
+		},
+	}
+	d, mockRT := newTestDaemon(cfg)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/apply", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+
+	// Should have called Run for the new container
+	runs := mockRT.CallsFor("Run")
+	if len(runs) != 1 {
+		t.Errorf("expected 1 Run call for new container, got %d", len(runs))
+	}
+
+	// State should show running
+	rs, ok := d.state.GetResource("db")
+	if !ok {
+		t.Fatal("expected db resource in state")
+	}
+	if rs.State != status.StateRunning {
+		t.Errorf("expected running, got %s", rs.State)
+	}
+}
+
+func TestHandleApply_Execute_RestartChanged(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Containers: map[string]config.ContainerConfig{
+			"db": {Image: "postgres:16"}, // changed image
+		},
+	}
+	d, mockRT := newTestDaemon(cfg)
+
+	// Pre-set as running with old config hash
+	d.state.SetResource(&status.ResourceStatus{
+		Name:       "db",
+		Type:       status.TypeContainer,
+		State:      status.StateRunning,
+		ConfigHash: "old-hash",
+	})
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "POST", "/v1/apply", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+
+	// Should have stopped then re-run
+	stops := mockRT.CallsFor("Stop")
+	runs := mockRT.CallsFor("Run")
+	if len(stops) != 1 {
+		t.Errorf("expected 1 Stop call for restart, got %d", len(stops))
+	}
+	if len(runs) != 1 {
+		t.Errorf("expected 1 Run call for restart, got %d", len(runs))
+	}
+}
+
+func TestHandleApply_Execute_StopRemoved(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		// No containers in config
+	}
+	d, mockRT := newTestDaemon(cfg)
+
+	// Pre-set a container that's no longer in config
+	d.state.SetResource(&status.ResourceStatus{
+		Name:  "old-db",
+		Type:  status.TypeContainer,
+		State: status.StateRunning,
+	})
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "POST", "/v1/apply", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+
+	// Should have stopped the removed container
+	stops := mockRT.CallsFor("Stop")
+	if len(stops) != 1 {
+		t.Errorf("expected 1 Stop call for removed container, got %d", len(stops))
+	}
+}
+
+// --- Up (service path) ---
+
+func TestHandleUp_Service(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Services: map[string]config.ServiceConfig{
+			"web": {Command: []string{"echo", "hi"}, RestartPolicy: "always"},
+		},
+	}
+	d, _ := newTestDaemon(cfg)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/up", map[string]interface{}{
+		"names": []string{"web"},
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	body := decodeJSON(t, rr)
+	started, _ := body["started"].([]interface{})
+	if len(started) != 1 || started[0] != "web" {
+		t.Errorf("expected [web] started, got %v", started)
+	}
+}
+
+// --- Down (service path) ---
+
+func TestHandleDown_Service(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Paths:   config.PathsConfig{Base: "/tmp/test", Logs: "/tmp/test"},
+		Daemon:  config.DaemonConfig{LogBufferLines: 100, StatusPollIntervalSecs: 5, ShutdownTimeoutSecs: 5},
+		Services: map[string]config.ServiceConfig{
+			"web": {Command: []string{"echo"}, RestartPolicy: "always"},
+		},
+	}
+	d, _ := newTestDaemon(cfg)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/down", map[string]interface{}{
+		"names": []string{"web"},
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	body := decodeJSON(t, rr)
+	stopped, _ := body["stopped"].([]interface{})
+	if len(stopped) != 1 {
+		t.Errorf("expected [web] stopped, got %v", stopped)
 	}
 }
 

@@ -1,6 +1,8 @@
 package plist
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,5 +64,111 @@ func TestGenerate_WorkingDirectory(t *testing.T) {
 
 	if p.WorkingDirectory != "/home/user/project" {
 		t.Errorf("expected working dir to be config parent, got %q", p.WorkingDirectory)
+	}
+}
+
+func TestAgentPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := AgentPath("com.test.agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := filepath.Join(home, "Library/LaunchAgents/com.test.agent.plist")
+	if path != expected {
+		t.Errorf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestPlistPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := PlistPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasSuffix(path, "com.skiff.daemon.plist") {
+		t.Errorf("expected path ending in com.skiff.daemon.plist, got %q", path)
+	}
+}
+
+func TestMenuPlistPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := MenuPlistPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasSuffix(path, "com.skiff.menu.plist") {
+		t.Errorf("expected path ending in com.skiff.menu.plist, got %q", path)
+	}
+}
+
+func TestExists_NotInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if Exists() {
+		t.Error("expected Exists()=false when plist not installed")
+	}
+}
+
+func TestExists_Installed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create the plist file manually
+	plistDir := filepath.Join(home, "Library/LaunchAgents")
+	os.MkdirAll(plistDir, 0755)
+	os.WriteFile(filepath.Join(plistDir, "com.skiff.daemon.plist"), []byte("<plist/>"), 0600)
+
+	if !Exists() {
+		t.Error("expected Exists()=true when plist is installed")
+	}
+}
+
+func TestMenuExists_NotInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if MenuExists() {
+		t.Error("expected MenuExists()=false when menu plist not installed")
+	}
+}
+
+func TestGenerateMenu(t *testing.T) {
+	p, err := GenerateMenu("/usr/local/bin/skiff-menu", "/tmp/skiff.sock", "/var/log/skiff")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if p.Label != MenuLabel {
+		t.Errorf("expected label %q, got %q", MenuLabel, p.Label)
+	}
+	if len(p.ProgramArguments) != 1 || p.ProgramArguments[0] != "/usr/local/bin/skiff-menu" {
+		t.Errorf("unexpected program arguments: %v", p.ProgramArguments)
+	}
+	if p.EnvironmentVariables["SKIFF_SOCKET"] != "/tmp/skiff.sock" {
+		t.Errorf("expected SKIFF_SOCKET set, got %v", p.EnvironmentVariables)
+	}
+	if !p.KeepAlive {
+		t.Error("expected KeepAlive to be true")
+	}
+}
+
+func TestUnloadAgent_NotInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Should be a no-op when plist doesn't exist
+	err := UnloadAgent("com.test.nonexistent")
+	if err != nil {
+		t.Errorf("expected nil error for uninstalling non-existent plist, got %v", err)
 	}
 }

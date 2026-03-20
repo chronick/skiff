@@ -390,6 +390,223 @@ services:
 	}
 }
 
+func TestInvalidRestartPolicy(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    command: ["echo"]
+    restart_policy: "restart-always"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for invalid restart policy")
+	}
+}
+
+func TestContainerLabelEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  app:
+    image: app:latest
+    labels:
+      "": "value"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for empty label key")
+	}
+}
+
+func TestContainerLabelReservedPrefix(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  app:
+    image: app:latest
+    labels:
+      skiff.custom: "value"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for reserved skiff.* label prefix")
+	}
+}
+
+func TestContainerNetworkNotDefined(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  app:
+    image: app:latest
+    network: mynet
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for undefined network reference")
+	}
+}
+
+func TestContainerNetworkHost(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  app:
+    image: app:latest
+    network: host
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("network=host should be valid: %v", err)
+	}
+}
+
+func TestContainerNoImageOrDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  app:
+    ports:
+      - "8080:8080"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for container without image or dockerfile")
+	}
+}
+
+func TestHealthCheckTCPRequiresPort(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    command: ["echo"]
+    health_check:
+      type: tcp
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for tcp health check without port")
+	}
+}
+
+func TestHealthCheckCommandRequiresCommand(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    command: ["echo"]
+    health_check:
+      type: command
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for command health check without command")
+	}
+}
+
+func TestHealthCheckUnknownType(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    command: ["echo"]
+    health_check:
+      type: grpc
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for unknown health check type")
+	}
+}
+
+func TestHealthCheckDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    command: ["echo"]
+    health_check:
+      type: http
+      url: http://localhost:8080/health
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hc := cfg.Services["web"].HealthCheck
+	if hc.IntervalSecs != 30 {
+		t.Errorf("expected default interval 30, got %d", hc.IntervalSecs)
+	}
+	if hc.TimeoutSecs != 5 {
+		t.Errorf("expected default timeout 5, got %d", hc.TimeoutSecs)
+	}
+	if hc.FailureThreshold != 3 {
+		t.Errorf("expected default threshold 3, got %d", hc.FailureThreshold)
+	}
+}
+
+func TestEmptyConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("empty config should be valid: %v", err)
+	}
+}
+
+func TestServiceMissingCommand(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  web:
+    working_dir: /tmp
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for service without command")
+	}
+}
+
 func TestScheduleRequiresInterval(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "skiff.yml")
