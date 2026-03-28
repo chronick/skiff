@@ -1060,3 +1060,174 @@ func TestWriteJSON(t *testing.T) {
 		t.Errorf("expected hello=world, got %v", body)
 	}
 }
+
+// --- Replicas ---
+
+func TestHandleReplicasEmpty(t *testing.T) {
+	d, _ := newTestDaemon(nil)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "GET", "/v1/replicas", nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestHandleReplicasWithGroups(t *testing.T) {
+	d, _ := newTestDaemon(&config.Config{
+		Version: 1,
+		Paths: config.PathsConfig{
+			Base:   "/tmp/skiff-test",
+			Socket: "/tmp/skiff-test.sock",
+			Logs:   "/tmp/skiff-test-logs",
+		},
+		Daemon: config.DaemonConfig{
+			LogBufferLines:         100,
+			StatusPollIntervalSecs: 5,
+			ShutdownTimeoutSecs:    5,
+		},
+		Containers: map[string]config.ContainerConfig{
+			"coder-1": {Image: "agent:latest"},
+			"coder-2": {Image: "agent:latest"},
+		},
+	})
+	d.replicaGroups = []config.ReplicaGroup{
+		{Template: "coder", Names: []string{"coder-1", "coder-2"}},
+	}
+
+	// Set some state
+	d.state.SetResource(&status.ResourceStatus{
+		Name:  "coder-1",
+		Type:  status.TypeContainer,
+		State: status.StateRunning,
+	})
+	d.state.SetResource(&status.ResourceStatus{
+		Name:  "coder-2",
+		Type:  status.TypeContainer,
+		State: status.StateRunning,
+	})
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "GET", "/v1/replicas", nil)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+
+	var result []struct {
+		Template string `json:"template"`
+		Count    int    `json:"count"`
+		Members  []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"members"`
+	}
+	json.NewDecoder(rr.Body).Decode(&result)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(result))
+	}
+	if result[0].Template != "coder" {
+		t.Errorf("expected template 'coder', got %s", result[0].Template)
+	}
+	if result[0].Count != 2 {
+		t.Errorf("expected count 2, got %d", result[0].Count)
+	}
+	if len(result[0].Members) != 2 {
+		t.Errorf("expected 2 members, got %d", len(result[0].Members))
+	}
+	for _, m := range result[0].Members {
+		if m.State != "running" {
+			t.Errorf("expected running state for %s, got %s", m.Name, m.State)
+		}
+	}
+}
+
+func TestHandleScaleNotFound(t *testing.T) {
+	d, _ := newTestDaemon(nil)
+	mux := d.setupRoutes()
+
+	rr := doRequest(mux, "POST", "/v1/scale", map[string]interface{}{
+		"name":     "nonexistent",
+		"replicas": 3,
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestHandleScaleUp(t *testing.T) {
+	d, _ := newTestDaemon(&config.Config{
+		Version: 1,
+		Paths: config.PathsConfig{
+			Base:   "/tmp/skiff-test",
+			Socket: "/tmp/skiff-test.sock",
+			Logs:   "/tmp/skiff-test-logs",
+		},
+		Daemon: config.DaemonConfig{
+			LogBufferLines:         100,
+			StatusPollIntervalSecs: 5,
+			ShutdownTimeoutSecs:    5,
+		},
+		Containers: map[string]config.ContainerConfig{
+			"coder-1": {Image: "agent:latest"},
+			"coder-2": {Image: "agent:latest"},
+		},
+	})
+	d.replicaGroups = []config.ReplicaGroup{
+		{Template: "coder", Names: []string{"coder-1", "coder-2"}},
+	}
+
+	// RunErr defaults to nil (success)
+
+	mux := d.setupRoutes()
+	rr := doRequest(mux, "POST", "/v1/scale", map[string]interface{}{
+		"name":     "coder",
+		"replicas": 4,
+	})
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(rr.Body).Decode(&result)
+
+	if int(result["current"].(float64)) != 4 {
+		t.Errorf("expected current=4, got %v", result["current"])
+	}
+	if int(result["previous"].(float64)) != 2 {
+		t.Errorf("expected previous=2, got %v", result["previous"])
+	}
+
+	// Verify new containers were created in config
+	if _, ok := d.cfg.Containers["coder-3"]; !ok {
+		t.Error("coder-3 should exist in config after scale up")
+	}
+	if _, ok := d.cfg.Containers["coder-4"]; !ok {
+		t.Error("coder-4 should exist in config after scale up")
+	}
+}
+
+func TestResolveNamesExpandsTemplates(t *testing.T) {
+	d, _ := newTestDaemon(nil)
+	d.replicaGroups = []config.ReplicaGroup{
+		{Template: "coder", Names: []string{"coder-1", "coder-2", "coder-3"}},
+	}
+
+	// Template name expands
+	resolved := d.resolveNames([]string{"coder"})
+	if len(resolved) != 3 {
+		t.Errorf("expected 3 resolved names, got %d: %v", len(resolved), resolved)
+	}
+
+	// Non-template name passes through
+	resolved = d.resolveNames([]string{"singleton"})
+	if len(resolved) != 1 || resolved[0] != "singleton" {
+		t.Errorf("expected [singleton], got %v", resolved)
+	}
+
+	// Mixed
+	resolved = d.resolveNames([]string{"singleton", "coder"})
+	if len(resolved) != 4 {
+		t.Errorf("expected 4 resolved names, got %d: %v", len(resolved), resolved)
+	}
+}

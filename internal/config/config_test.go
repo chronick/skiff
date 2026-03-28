@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -621,5 +622,232 @@ schedules:
 	_, err := Load(cfgPath)
 	if err == nil {
 		t.Fatal("expected error for schedule without interval")
+	}
+}
+
+func TestReplicaExpansion(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  coder:
+    image: agent:latest
+    replicas: 3
+    volumes:
+      - ~/worktrees/{name}:/workspace
+    env:
+      AGENT_NAME: "{name}"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Template should be gone, replaced by 3 replicas
+	if _, ok := cfg.Containers["coder"]; ok {
+		t.Error("template 'coder' should not exist after expansion")
+	}
+	if len(cfg.Containers) != 3 {
+		t.Errorf("expected 3 containers, got %d", len(cfg.Containers))
+	}
+
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("coder-%d", i)
+		c, ok := cfg.Containers[name]
+		if !ok {
+			t.Errorf("expected container %q to exist", name)
+			continue
+		}
+		if c.Image != "agent:latest" {
+			t.Errorf("%s: expected image agent:latest, got %s", name, c.Image)
+		}
+		if c.Replicas != 0 {
+			t.Errorf("%s: expanded replica should have Replicas=0, got %d", name, c.Replicas)
+		}
+		// Check {name} substitution in volumes (~ not expanded in volumes)
+		expectedVol := fmt.Sprintf("~/worktrees/%s:/workspace", name)
+		if len(c.Volumes) != 1 || c.Volumes[0] != expectedVol {
+			t.Errorf("%s: expected volume %q, got %v", name, expectedVol, c.Volumes)
+		}
+		// Check {name} substitution in env
+		if c.Env["AGENT_NAME"] != name {
+			t.Errorf("%s: expected AGENT_NAME=%s, got %s", name, name, c.Env["AGENT_NAME"])
+		}
+	}
+}
+
+func TestReplicaPortsOnlyFirstReplica(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  web:
+    image: web:latest
+    replicas: 2
+    ports:
+      - "8080:8080"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// First replica gets ports
+	if len(cfg.Containers["web-1"].Ports) != 1 {
+		t.Errorf("web-1 should have 1 port, got %d", len(cfg.Containers["web-1"].Ports))
+	}
+	// Second replica should not
+	if len(cfg.Containers["web-2"].Ports) != 0 {
+		t.Errorf("web-2 should have 0 ports, got %d", len(cfg.Containers["web-2"].Ports))
+	}
+}
+
+func TestReplicaZeroIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  singleton:
+    image: app:latest
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if _, ok := cfg.Containers["singleton"]; !ok {
+		t.Error("singleton container should remain unchanged")
+	}
+	if len(cfg.Containers) != 1 {
+		t.Errorf("expected 1 container, got %d", len(cfg.Containers))
+	}
+}
+
+func TestReplicaWithDependsOn(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+services:
+  mail:
+    command: ["mail-server"]
+containers:
+  coder:
+    image: agent:latest
+    replicas: 2
+    depends_on: [mail]
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	for i := 1; i <= 2; i++ {
+		name := fmt.Sprintf("coder-%d", i)
+		c := cfg.Containers[name]
+		if len(c.DependsOn) != 1 || c.DependsOn[0] != "mail" {
+			t.Errorf("%s: expected depends_on=[mail], got %v", name, c.DependsOn)
+		}
+	}
+
+	// Verify dependency ordering works
+	order, err := DependencyOrder(cfg)
+	if err != nil {
+		t.Fatalf("dependency order failed: %v", err)
+	}
+	mailIdx := -1
+	for i, n := range order {
+		if n == "mail" {
+			mailIdx = i
+		}
+	}
+	for i, n := range order {
+		if n == "coder-1" || n == "coder-2" {
+			if i < mailIdx {
+				t.Errorf("%s should come after mail in dependency order", n)
+			}
+		}
+	}
+}
+
+func TestReplicaNamePlaceholderInImageRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  bad:
+    image: "{name}:latest"
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for {name} in image field")
+	}
+}
+
+func TestReplicaDuplicateNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	// coder with replicas:2 creates coder-1, coder-2
+	// but coder-1 already exists as a separate container
+	content := `version: 1
+containers:
+  coder:
+    image: agent:latest
+    replicas: 2
+  coder-1:
+    image: other:latest
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	_, err := Load(cfgPath)
+	if err == nil {
+		t.Fatal("expected error for replica name collision with existing container")
+	}
+}
+
+func TestLoadRaw(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "skiff.yml")
+
+	content := `version: 1
+containers:
+  coder:
+    image: agent:latest
+    replicas: 3
+  singleton:
+    image: app:latest
+`
+	os.WriteFile(cfgPath, []byte(content), 0644)
+	raw, err := LoadRaw(cfgPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Raw should have unexpanded containers
+	if len(raw) != 2 {
+		t.Errorf("expected 2 raw containers, got %d", len(raw))
+	}
+	if raw["coder"].Replicas != 3 {
+		t.Errorf("expected replicas=3 in raw, got %d", raw["coder"].Replicas)
+	}
+
+	groups := ReplicaGroups(nil, raw)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 replica group, got %d", len(groups))
+	}
+	if groups[0].Template != "coder" {
+		t.Errorf("expected template 'coder', got %s", groups[0].Template)
+	}
+	if len(groups[0].Names) != 3 {
+		t.Errorf("expected 3 names, got %d", len(groups[0].Names))
 	}
 }

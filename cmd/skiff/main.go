@@ -68,6 +68,7 @@ func main() {
 		execCmd(),
 		logsCmd(),
 		runNowCmd(),
+		scaleCmd(),
 		installCmd(),
 		uninstallCmd(),
 		configCmd(),
@@ -89,18 +90,22 @@ func daemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Start the skiff daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load raw config first to discover replica templates
+			rawContainers, _ := config.LoadRaw(configPath)
+
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return err
 			}
 
+			groups := config.ReplicaGroups(cfg, rawContainers)
 			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 			if daemonize {
 				return daemonizeProcess(cfg)
 			}
 
-			d := daemon.New(cfg, logger)
+			d := daemon.New(cfg, groups, logger)
 			return d.Run(context.Background())
 		},
 	}
@@ -238,10 +243,15 @@ func killCmd() *cobra.Command {
 func psCmd() *cobra.Command {
 	var jsonOutput bool
 	var showStats bool
+	var showGroup bool
 	cmd := &cobra.Command{
 		Use:   "ps",
 		Short: "Show status of all resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if showGroup {
+				return printReplicaGroups(jsonOutput)
+			}
+
 			resp, err := apiCall("GET", "/v1/status", nil)
 			if err != nil {
 				return err
@@ -257,7 +267,111 @@ func psCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	cmd.Flags().BoolVar(&showStats, "stats", false, "show CPU/memory stats for containers")
+	cmd.Flags().BoolVar(&showGroup, "group", false, "show replicas grouped by template")
 	return cmd
+}
+
+func scaleCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "scale <name> <replicas>",
+		Short: "Scale a replica group up or down",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			n, err := strconv.Atoi(args[1])
+			if err != nil {
+				return fmt.Errorf("invalid replica count: %s", args[1])
+			}
+
+			resp, err := apiCall("POST", "/v1/scale", map[string]interface{}{
+				"name":     name,
+				"replicas": n,
+			})
+			if err != nil {
+				return err
+			}
+
+			var result struct {
+				Template string            `json:"template"`
+				Previous int               `json:"previous"`
+				Current  int               `json:"current"`
+				Started  []string          `json:"started"`
+				Stopped  []string          `json:"stopped"`
+				Errors   map[string]string `json:"errors"`
+			}
+			if err := json.Unmarshal(resp, &result); err != nil {
+				fmt.Println(string(resp))
+				return nil
+			}
+
+			fmt.Printf("%s: %d → %d replicas\n", result.Template, result.Previous, result.Current)
+			for _, s := range result.Started {
+				green.Printf("  + %s\n", s)
+			}
+			for _, s := range result.Stopped {
+				red.Printf("  - %s\n", s)
+			}
+			for name, e := range result.Errors {
+				red.Printf("  ! %s: %s\n", name, e)
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
+func printReplicaGroups(jsonOutput bool) error {
+	resp, err := apiCall("GET", "/v1/replicas", nil)
+	if err != nil {
+		return err
+	}
+
+	if jsonOutput {
+		fmt.Println(string(resp))
+		return nil
+	}
+
+	var groups []struct {
+		Template string `json:"template"`
+		Count    int    `json:"count"`
+		Members  []struct {
+			Name       string  `json:"name"`
+			State      string  `json:"state"`
+			CPUPercent float64 `json:"cpu_percent"`
+			MemUsageMB int64   `json:"mem_usage_mb"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(resp, &groups); err != nil {
+		fmt.Println(string(resp))
+		return nil
+	}
+
+	if len(groups) == 0 {
+		fmt.Println("No replica groups configured")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for _, g := range groups {
+		bold.Fprintf(w, "%s\t(%d replicas)\n", g.Template, g.Count)
+		for _, m := range g.Members {
+			stateColor := yellow
+			switch m.State {
+			case "running":
+				stateColor = green
+			case "stopped", "failed":
+				stateColor = red
+			}
+			fmt.Fprintf(w, "  %s\t", m.Name)
+			stateColor.Fprintf(w, "%s", m.State)
+			if m.CPUPercent > 0 || m.MemUsageMB > 0 {
+				fmt.Fprintf(w, "\tcpu: %.1f%%  mem: %dMB", m.CPUPercent, m.MemUsageMB)
+			}
+			fmt.Fprintln(w)
+		}
+	}
+	w.Flush()
+	return nil
 }
 
 func statusCmd() *cobra.Command {

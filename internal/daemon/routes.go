@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chronick/skiff/internal/config"
@@ -20,6 +21,10 @@ func (d *Daemon) setupRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/containers", d.handleContainers)
 	mux.HandleFunc("GET /v1/schedules", d.handleSchedules)
 	mux.HandleFunc("GET /v1/schedule/{name}", d.handleScheduleByName)
+
+	// Replica routes
+	mux.HandleFunc("GET /v1/replicas", d.handleReplicas)
+	mux.HandleFunc("POST /v1/scale", d.handleScale)
 
 	// Control routes
 	mux.HandleFunc("POST /v1/up", d.handleUp)
@@ -108,7 +113,7 @@ func (d *Daemon) handleUp(w http.ResponseWriter, r *http.Request) {
 	started := []string{}
 	errors := map[string]string{}
 
-	names := body.Names
+	names := d.resolveNames(body.Names)
 	if len(names) == 0 {
 		// Start all
 		order, err := config.DependencyOrder(d.cfg)
@@ -191,7 +196,7 @@ func (d *Daemon) handleDown(w http.ResponseWriter, r *http.Request) {
 	stopped := []string{}
 	errors := map[string]string{}
 
-	names := body.Names
+	names := d.resolveNames(body.Names)
 	if len(names) == 0 {
 		// Stop all (reverse dependency order)
 		order, err := config.DependencyOrder(d.cfg)
@@ -368,6 +373,38 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	ctx := r.Context()
+
+	// Check if this is a replica template name
+	resolved := d.resolveNames([]string{name})
+	if len(resolved) > 1 {
+		// Template name — restart all members
+		restarted := []string{}
+		errors := map[string]string{}
+		for _, member := range resolved {
+			if cCfg, ok := d.cfg.Containers[member]; ok {
+				_ = d.runtime.Stop(ctx, member)
+				rtCfg := containerToRuntimeConfig(member, cCfg)
+				if err := d.runtime.Run(ctx, member, rtCfg); err != nil {
+					errors[member] = err.Error()
+				} else {
+					restarted = append(restarted, member)
+					d.state.SetResource(&status.ResourceStatus{
+						Name:       member,
+						Type:       status.TypeContainer,
+						State:      status.StateRunning,
+						StartedAt:  time.Now(),
+						ConfigHash: config.Hash(cCfg),
+						Ports:      cCfg.Ports,
+					})
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"restarted": restarted,
+			"errors":    errors,
+		})
+		return
+	}
 
 	if svcCfg, ok := d.cfg.Services[name]; ok {
 		_ = d.supervisor.Stop(name)
@@ -594,6 +631,168 @@ func (d *Daemon) handleStatsByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, rs.Stats)
+}
+
+// resolveNames expands template names to their replica members.
+// If a name matches a replica group template, all members are returned.
+// Otherwise the name is returned as-is.
+func (d *Daemon) resolveNames(names []string) []string {
+	templateMap := make(map[string][]string)
+	for _, g := range d.replicaGroups {
+		templateMap[g.Template] = g.Names
+	}
+
+	var resolved []string
+	for _, name := range names {
+		if members, ok := templateMap[name]; ok {
+			resolved = append(resolved, members...)
+		} else {
+			resolved = append(resolved, name)
+		}
+	}
+	return resolved
+}
+
+func (d *Daemon) handleReplicas(w http.ResponseWriter, r *http.Request) {
+	type replicaInfo struct {
+		Template string                   `json:"template"`
+		Count    int                      `json:"count"`
+		Members  []map[string]interface{} `json:"members"`
+	}
+
+	var result []replicaInfo
+	for _, g := range d.replicaGroups {
+		info := replicaInfo{
+			Template: g.Template,
+			Count:    len(g.Names),
+		}
+		for _, name := range g.Names {
+			member := map[string]interface{}{"name": name}
+			if rs, ok := d.state.GetResource(name); ok {
+				member["state"] = rs.State
+				if rs.Stats != nil {
+					member["cpu_percent"] = rs.Stats.CPUPercent
+					member["mem_usage_mb"] = rs.Stats.MemUsageMB
+				}
+			} else {
+				member["state"] = "unknown"
+			}
+			info.Members = append(info.Members, member)
+		}
+		result = append(result, info)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (d *Daemon) handleScale(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name     string `json:"name"`
+		Replicas int    `json:"replicas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if body.Replicas < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "replicas must be >= 0"})
+		return
+	}
+
+	// Find the replica group
+	var group *config.ReplicaGroup
+	for i := range d.replicaGroups {
+		if d.replicaGroups[i].Template == body.Name {
+			group = &d.replicaGroups[i]
+			break
+		}
+	}
+	if group == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("replica template %q not found", body.Name)})
+		return
+	}
+
+	ctx := r.Context()
+	current := len(group.Names)
+	started := []string{}
+	stopped := []string{}
+	errors := map[string]string{}
+
+	if body.Replicas > current {
+		// Scale up: start new replicas
+		// Find the base config from an existing member
+		baseName := group.Names[0]
+		baseCfg, ok := d.cfg.Containers[baseName]
+		if !ok {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "base config not found"})
+			return
+		}
+
+		for i := current + 1; i <= body.Replicas; i++ {
+			newName := fmt.Sprintf("%s-%d", body.Name, i)
+
+			// Create config with {name} substitution
+			newCfg := baseCfg
+			var vols []string
+			for _, v := range baseCfg.Volumes {
+				vols = append(vols, strings.ReplaceAll(
+					strings.ReplaceAll(v, baseName, newName),
+					baseName, newName,
+				))
+			}
+			newCfg.Volumes = vols
+			if baseCfg.Env != nil {
+				newEnv := make(map[string]string, len(baseCfg.Env))
+				for k, v := range baseCfg.Env {
+					newEnv[k] = strings.ReplaceAll(v, baseName, newName)
+				}
+				newCfg.Env = newEnv
+			}
+			newCfg.Ports = nil // no port binds for new replicas
+
+			d.cfg.Containers[newName] = newCfg
+			rtCfg := containerToRuntimeConfig(newName, newCfg)
+			if err := d.runtime.Run(ctx, newName, rtCfg); err != nil {
+				errors[newName] = err.Error()
+			} else {
+				started = append(started, newName)
+				d.state.SetResource(&status.ResourceStatus{
+					Name:       newName,
+					Type:       status.TypeContainer,
+					State:      status.StateRunning,
+					StartedAt:  time.Now(),
+					ConfigHash: config.Hash(newCfg),
+				})
+				if newCfg.HealthCheck != nil {
+					d.health.StartProbe(ctx, newName, newCfg.HealthCheck)
+				}
+			}
+			group.Names = append(group.Names, newName)
+		}
+	} else if body.Replicas < current {
+		// Scale down: stop excess replicas (from the end)
+		for i := current; i > body.Replicas; i-- {
+			removeName := group.Names[i-1]
+			d.health.StopProbe(removeName)
+			if err := d.runtime.Stop(ctx, removeName); err != nil {
+				errors[removeName] = err.Error()
+			} else {
+				stopped = append(stopped, removeName)
+				d.state.RemoveResource(removeName)
+				delete(d.cfg.Containers, removeName)
+			}
+		}
+		group.Names = group.Names[:body.Replicas]
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"template": body.Name,
+		"previous": current,
+		"current":  len(group.Names),
+		"started":  started,
+		"stopped":  stopped,
+		"errors":   errors,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, data interface{}) {

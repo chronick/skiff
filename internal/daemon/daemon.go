@@ -26,19 +26,20 @@ import (
 
 // Daemon is the main control plane process.
 type Daemon struct {
-	cfg        *config.Config
-	state      *status.SharedState
-	logs       *logbuf.LogBuffer
-	supervisor *supervisor.Supervisor
-	scheduler  *scheduler.Scheduler
-	health     *health.Checker
-	runtime    runtime.ContainerRuntime
-	dns        *dns.ServiceDNS
-	runner     runner.ProcessRunner
-	adhoc      *AdhocTracker
-	logger     *slog.Logger
-	server     *http.Server
-	tcpServer  *http.Server
+	cfg           *config.Config
+	replicaGroups []config.ReplicaGroup // template→expanded name mapping
+	state         *status.SharedState
+	logs          *logbuf.LogBuffer
+	supervisor    *supervisor.Supervisor
+	scheduler     *scheduler.Scheduler
+	health        *health.Checker
+	runtime       runtime.ContainerRuntime
+	dns           *dns.ServiceDNS
+	runner        runner.ProcessRunner
+	adhoc         *AdhocTracker
+	logger        *slog.Logger
+	server        *http.Server
+	tcpServer     *http.Server
 
 	logOffsetsMu sync.Mutex
 	logOffsets   map[string]int // tracks last-seen log line count per container
@@ -52,8 +53,9 @@ type prevStatsSample struct {
 	time         time.Time
 }
 
-// New creates a Daemon from config.
-func New(cfg *config.Config, logger *slog.Logger) *Daemon {
+// New creates a Daemon from config. replicaGroups maps template names to
+// their expanded container names (from LoadRaw + ReplicaGroups).
+func New(cfg *config.Config, replicaGroups []config.ReplicaGroup, logger *slog.Logger) *Daemon {
 	logs := logbuf.New(cfg.Daemon.LogBufferLines)
 	state := status.NewSharedState()
 	r := &runner.ExecRunner{}
@@ -80,8 +82,9 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 	adhocTracker := NewAdhocTracker(state, rt, logger)
 
 	d := &Daemon{
-		cfg:        cfg,
-		state:      state,
+		cfg:           cfg,
+		replicaGroups: replicaGroups,
+		state:         state,
 		logs:       logs,
 		supervisor: sup,
 		scheduler:  sched,

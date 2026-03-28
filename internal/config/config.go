@@ -86,6 +86,13 @@ type ContainerConfig struct {
 	Network     string             `yaml:"network,omitempty"`
 	HealthCheck *HealthCheckConfig `yaml:"health_check,omitempty"`
 	DependsOn   []string           `yaml:"depends_on,omitempty"`
+	Replicas    int                `yaml:"replicas,omitempty"`
+}
+
+// ReplicaGroup tracks which expanded container names came from a template.
+type ReplicaGroup struct {
+	Template string   // original config name (e.g. "coder")
+	Names    []string // expanded names (e.g. ["coder-1", "coder-2"])
 }
 
 type ScheduleConfig struct {
@@ -146,6 +153,12 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Expand replicas before defaults and validation so expanded
+	// containers are treated identically to hand-written ones.
+	if err := expandReplicas(&cfg); err != nil {
+		return nil, fmt.Errorf("expanding replicas: %w", err)
+	}
+
 	applyDefaults(&cfg)
 
 	if err := validate(&cfg); err != nil {
@@ -160,6 +173,134 @@ func Hash(cfg interface{}) string {
 	data, _ := yaml.Marshal(cfg)
 	h := sha256.Sum256(data)
 	return fmt.Sprintf("%x", h[:8])
+}
+
+// expandReplicas expands container templates with replicas > 0 into N
+// individual container configs (e.g. "coder" with replicas:3 becomes
+// "coder-1", "coder-2", "coder-3"). The "{name}" placeholder in volumes
+// and env values is substituted with the expanded name.
+func expandReplicas(cfg *Config) error {
+	if cfg.Containers == nil {
+		return nil
+	}
+
+	expanded := make(map[string]ContainerConfig, len(cfg.Containers))
+	for name, c := range cfg.Containers {
+		if c.Replicas <= 0 {
+			expanded[name] = c
+			continue
+		}
+		for i := 1; i <= c.Replicas; i++ {
+			replicaName := fmt.Sprintf("%s-%d", name, i)
+			// Check collision with other containers in the original config
+			if _, exists := cfg.Containers[replicaName]; exists {
+				return fmt.Errorf("container %q: replica name %q collides with existing container", name, replicaName)
+			}
+			if _, exists := expanded[replicaName]; exists {
+				return fmt.Errorf("container %q: replica name %q collides with another expanded replica", name, replicaName)
+			}
+
+			// Deep copy volumes with {name} substitution
+			var vols []string
+			for _, v := range c.Volumes {
+				vols = append(vols, strings.ReplaceAll(v, "{name}", replicaName))
+			}
+
+			// Deep copy env with {name} substitution
+			var env map[string]string
+			if c.Env != nil {
+				env = make(map[string]string, len(c.Env))
+				for k, v := range c.Env {
+					env[k] = strings.ReplaceAll(v, "{name}", replicaName)
+				}
+			}
+
+			// Deep copy labels, add replica metadata
+			labels := make(map[string]string, len(c.Labels)+2)
+			for k, v := range c.Labels {
+				labels[k] = v
+			}
+
+			// Copy depends_on
+			var deps []string
+			if len(c.DependsOn) > 0 {
+				deps = make([]string, len(c.DependsOn))
+				copy(deps, c.DependsOn)
+			}
+
+			// Copy ports (only first replica gets ports to avoid bind conflicts)
+			var ports []string
+			if i == 1 && len(c.Ports) > 0 {
+				ports = make([]string, len(c.Ports))
+				copy(ports, c.Ports)
+			}
+
+			replica := ContainerConfig{
+				Image:       c.Image,
+				Dockerfile:  c.Dockerfile,
+				Context:     c.Context,
+				Volumes:     vols,
+				Env:         env,
+				Ports:       ports,
+				CPUs:        c.CPUs,
+				Memory:      c.Memory,
+				Labels:      labels,
+				Init:        c.Init,
+				ReadOnly:    c.ReadOnly,
+				Network:     c.Network,
+				HealthCheck: c.HealthCheck,
+				DependsOn:   deps,
+				// Replicas stays 0 on expanded containers
+			}
+			expanded[replicaName] = replica
+		}
+	}
+	cfg.Containers = expanded
+	return nil
+}
+
+// ReplicaGroups inspects the raw YAML config at path and returns replica
+// group metadata. This must be called before expansion (or on a separately
+// parsed config) to discover which names are templates.
+func ReplicaGroups(cfg *Config, rawContainers map[string]ContainerConfig) []ReplicaGroup {
+	var groups []ReplicaGroup
+	// Sort for deterministic order
+	names := make([]string, 0, len(rawContainers))
+	for name := range rawContainers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		c := rawContainers[name]
+		if c.Replicas <= 0 {
+			continue
+		}
+		g := ReplicaGroup{Template: name}
+		for i := 1; i <= c.Replicas; i++ {
+			g.Names = append(g.Names, fmt.Sprintf("%s-%d", name, i))
+		}
+		groups = append(groups, g)
+	}
+	return groups
+}
+
+// LoadRaw reads a skiff.yml file and returns the config before replica
+// expansion. Useful for discovering replica templates.
+func LoadRaw(path string) (map[string]ContainerConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading config: %w", err)
+	}
+	envFile := filepath.Join(filepath.Dir(path), ".env")
+	dotenv := loadDotEnv(envFile)
+	resolved := resolveEnvVars(string(data), dotenv)
+
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(resolved), &cfg); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	return cfg.Containers, nil
 }
 
 func applyDefaults(cfg *Config) {
@@ -313,6 +454,17 @@ func validate(cfg *Config) error {
 		}
 		if err := validateHealthCheck(name, c.HealthCheck); err != nil {
 			return err
+		}
+	}
+
+	// Validate no leftover {name} placeholders in expanded containers
+	// (they should have been substituted during expansion)
+	for name, c := range cfg.Containers {
+		if strings.Contains(c.Image, "{name}") {
+			return fmt.Errorf("container %q: {name} placeholder not allowed in image field", name)
+		}
+		if strings.Contains(c.Dockerfile, "{name}") {
+			return fmt.Errorf("container %q: {name} placeholder not allowed in dockerfile field", name)
 		}
 	}
 
