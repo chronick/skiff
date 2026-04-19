@@ -22,10 +22,30 @@ make install
 
 Or ask Claude to set it up for you:
 
+**Minimal** — install skiff and create a config for your services:
 ```
-Install and configure skiff on this machine. Clone https://github.com/chronick/skiff,
-run install.sh, then create a skiff.yml in ~/.config/skiff/ that manages any services
-I describe.
+Install skiff on this machine: run the install script from
+https://github.com/chronick/skiff, then create ~/.config/skiff/config.yml
+that manages the following services: [describe your services here]
+```
+
+**Opinionated** — install skiff and scaffold a version-controlled "rig" repo:
+```
+Install skiff on this machine: run the install script from
+https://github.com/chronick/skiff, then scaffold a "rig" repo at ~/rig with
+this structure:
+
+  ~/rig/
+    config/skiff.yml     # skiff config, pointed at this repo
+    scripts/             # maintenance and automation scripts
+    data/                # runtime data (gitignored)
+    logs/                # log output (gitignored)
+
+Initialize it as a git repo, set skiff's paths.base to ~/rig and paths.logs
+to ~/rig/logs, add a .gitignore for data/ and logs/, then populate
+config/skiff.yml with the following services: [describe your services here]
+
+Run `skiff install` to register it as a login service.
 ```
 
 ## Quick Start
