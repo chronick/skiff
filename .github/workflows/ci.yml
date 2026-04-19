@@ -21,6 +21,71 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
 
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build skiff
+        run: go build -o /tmp/skiff-e2e-bin ./cmd/skiff
+
+      - name: Verify Docker is available
+        run: docker info
+
+      - name: Start skiff daemon
+        run: /tmp/skiff-e2e-bin daemon --config config/skiff.e2e.yml --daemonize
+
+      - name: Wait for daemon API
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf -H "Authorization: Bearer e2e-test-token" http://127.0.0.1:19100/v1/status >/dev/null; then
+              echo "Daemon API up"; break
+            fi
+            [ $i -eq 10 ] && echo "Daemon API never came up" && exit 1
+            sleep 2
+          done
+
+      - name: Verify hello service is running
+        run: |
+          STATUS=$(curl -s -H "Authorization: Bearer e2e-test-token" http://127.0.0.1:19100/v1/status)
+          echo "$STATUS" | python3 -c "
+          import sys, json
+          resources = json.load(sys.stdin).get('resources', [])
+          hello = next((r for r in resources if r['name'] == 'hello'), None)
+          assert hello, 'hello service not found in /v1/status'
+          assert hello['state'] == 'running', f\"hello state={hello['state']}, expected running\"
+          print(f\"hello: {hello['state']} (pid {hello.get('pid', '?')})\")
+          "
+
+      - name: Verify hello-docker container reaches running state
+        run: |
+          for i in $(seq 1 20); do
+            STATE=$(curl -s -H "Authorization: Bearer e2e-test-token" http://127.0.0.1:19100/v1/status \
+              | python3 -c "import sys,json; r=[x for x in json.load(sys.stdin).get('resources',[]) if x['name']=='hello-docker']; print(r[0]['state'] if r else '')" 2>/dev/null)
+            if [ "$STATE" = "running" ]; then
+              echo "hello-docker: running"; break
+            fi
+            [ $i -eq 20 ] && echo "hello-docker never reached running (last: ${STATE:-unknown})" && exit 1
+            sleep 3
+          done
+
+      - name: Verify Docker runtime (not apple) was selected
+        run: |
+          LOG=$(curl -s -H "Authorization: Bearer e2e-test-token" \
+            "http://127.0.0.1:19100/v1/logs/hello-docker?lines=50" 2>/dev/null || true)
+          if echo "$LOG" | grep -qi "apple"; then
+            echo "ERROR: 'apple' runtime detected on Linux" && exit 1
+          fi
+          echo "Runtime check passed (no apple runtime)"
+
+      - name: Stop daemon
+        if: always()
+        run: pkill skiff-e2e-bin 2>/dev/null || true
+
   build-image:
     needs: test
     runs-on: ubuntu-latest
