@@ -1,10 +1,10 @@
 # skiff
 
-Container orchestration for macOS. Single binary, single YAML config.
+Container orchestration for macOS and Linux. Single binary, single YAML config.
 
-skiff sits between docker-compose and Kubernetes — health-aware lifecycle management, scheduling, service discovery, and a control plane API, built around [Apple Container Runtime](https://github.com/apple/container).
+skiff sits between docker-compose and Kubernetes — health-aware lifecycle management, scheduling, service discovery, and a control plane API. On macOS it uses [Apple Container Runtime](https://github.com/apple/container) when available, falling back to Docker. On Linux it uses Docker.
 
-It also manages native macOS services as child processes, making it a unified control plane for containers, daemons, and scheduled jobs on a single Mac.
+It also manages native services as child processes, making it a unified control plane for containers, daemons, and scheduled jobs on a single machine.
 
 ## Install
 
@@ -18,6 +18,14 @@ Or build from source:
 git clone https://github.com/chronick/skiff.git
 cd skiff
 make install
+```
+
+Or ask Claude to set it up for you:
+
+```
+Install and configure skiff on this machine. Clone https://github.com/chronick/skiff,
+run install.sh, then create a skiff.yml in ~/.config/skiff/ that manages any services
+I describe.
 ```
 
 ## Quick Start
@@ -105,7 +113,7 @@ See [`config/skiff.example.yml`](config/skiff.example.yml) for a fully annotated
 
 ## Features
 
-**Containers** — Build and run via Apple Container Runtime. Volumes, ports, env vars, CPU/memory limits, networks, labels.
+**Containers** — Build and run via Docker or Apple Container Runtime. Volumes, ports, env vars, CPU/memory limits, networks, labels.
 
 **Native Services** — Manage any process as a child of the daemon. Restart policies (always/on-failure/never), exponential backoff, process group signaling.
 
@@ -113,7 +121,7 @@ See [`config/skiff.example.yml`](config/skiff.example.yml) for a fully annotated
 
 **Dependency Ordering** — Unified DAG across services and containers. Health-gated startup — dependents wait until dependencies are healthy.
 
-**Scheduler** — Built-in cron-like scheduling with interval or calendar syntax. No external cron or launchd plists needed.
+**Scheduler** — Built-in cron-like scheduling with interval or calendar syntax. No external cron or launchd/systemd units needed.
 
 **DNS** — Embedded DNS server for container-to-container service discovery (`<name>.skiff.local`).
 
@@ -125,7 +133,7 @@ See [`config/skiff.example.yml`](config/skiff.example.yml) for a fully annotated
 
 **TUI Dashboard** — Interactive terminal UI for monitoring all resources.
 
-**Menu Bar App** — macOS menu bar status indicator.
+**Menu Bar App** — macOS menu bar status indicator (macOS only).
 
 ## CLI
 
@@ -145,8 +153,8 @@ skiff exec <name> -- <cmd>  Exec in running container
 skiff run-now <name>        Trigger scheduled job
 skiff config                Validate and print config
 skiff daemon [-d]           Start control plane
-skiff install               Install as launchd agent
-skiff uninstall             Remove from launchd
+skiff install               Install as login service (launchd on macOS, systemd on Linux)
+skiff uninstall             Remove login service
 skiff tui                   Interactive dashboard
 skiff init                  Generate starter config
 ```
@@ -154,17 +162,38 @@ skiff init                  Generate starter config
 ## Boot on Login
 
 ```bash
-# Install daemon + menu bar as launchd agents
+# Install daemon as a login service (auto-detects launchd vs systemd)
 skiff install
 
 # Remove
 skiff uninstall
 ```
 
+## Runtime Auto-Detection
+
+skiff picks the container runtime automatically:
+
+| Platform | Runtime |
+|----------|---------|
+| macOS + `container` CLI present | Apple Container Runtime |
+| macOS (no `container` CLI) | Docker |
+| Linux | Docker |
+
+Override explicitly in `skiff.yml`:
+
+```yaml
+daemon:
+  runtime: docker   # or "apple"
+```
+
 ## Requirements
 
-- macOS with [Apple Container Runtime](https://github.com/apple/container)
-- Go 1.22+ (build from source only)
+**macOS:** Go 1.22+ (build only). Docker or [Apple Container Runtime](https://github.com/apple/container).
+
+**Linux (Ubuntu/Debian):** Go 1.22+ (build only). Docker Engine — install via:
+```bash
+curl -fsSL https://get.docker.com | sh
+```
 
 ## License
 
