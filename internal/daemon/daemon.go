@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	goos "runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -65,10 +67,10 @@ func New(cfg *config.Config, replicaGroups []config.ReplicaGroup, logger *slog.L
 	hc := health.NewChecker(state, logs, r, logger)
 
 	var rt runtime.ContainerRuntime
-	switch cfg.Daemon.Runtime {
+	switch detectRuntime(cfg.Daemon.Runtime) {
 	case "apple":
 		rt = runtime.NewAppleRuntime(r, logger)
-	default: // "docker" or empty
+	default: // "docker"
 		rt = runtime.NewDockerRuntime(r, logger)
 	}
 
@@ -509,4 +511,19 @@ func (d *Daemon) logPoller(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// detectRuntime resolves "auto" (or empty) to a concrete runtime name.
+// On macOS it picks "apple" when the `container` CLI is available, else "docker".
+// On Linux it always returns "docker".
+func detectRuntime(configured string) string {
+	if configured != "" && configured != "auto" {
+		return configured
+	}
+	if goos.GOOS == "darwin" {
+		if _, err := exec.LookPath("container"); err == nil {
+			return "apple"
+		}
+	}
+	return "docker"
 }

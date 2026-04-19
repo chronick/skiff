@@ -5,20 +5,39 @@ REPO="chronick/skiff"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
 info()  { printf '\033[1;34m==> %s\033[0m\n' "$*"; }
+warn()  { printf '\033[1;33mwarn: %s\033[0m\n' "$*"; }
 error() { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# --- Checks ---
+# --- Platform detection ---
 
-[[ "$(uname -s)" == "Darwin" ]] || error "skiff only supports macOS"
+OS="$(uname -s)"
+case "$OS" in
+  Darwin) PLATFORM=darwin ;;
+  Linux)  PLATFORM=linux ;;
+  *)      error "unsupported platform: $OS" ;;
+esac
 
-command -v git  >/dev/null || error "git is required"
-command -v go   >/dev/null || error "go 1.22+ is required (https://go.dev/dl/)"
+# --- Dependency checks ---
+
+command -v git >/dev/null || error "git is required"
+
+if ! command -v go >/dev/null; then
+  if [[ "$PLATFORM" == "linux" ]]; then
+    error "go 1.22+ is required. Install via: sudo apt-get install -y golang-go  OR  https://go.dev/dl/"
+  else
+    error "go 1.22+ is required (https://go.dev/dl/)"
+  fi
+fi
 
 go_version=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/go//')
 go_major=$(echo "$go_version" | cut -d. -f1)
 go_minor=$(echo "$go_version" | cut -d. -f2)
 if (( go_major < 1 || (go_major == 1 && go_minor < 22) )); then
   error "go 1.22+ required, found go${go_version}"
+fi
+
+if [[ "$PLATFORM" == "linux" ]]; then
+  command -v docker >/dev/null || error "docker is required on Linux (https://docs.docker.com/engine/install/ubuntu/)"
 fi
 
 # --- Clone & Build ---
@@ -33,14 +52,20 @@ cd "$TMPDIR/skiff"
 
 info "Building skiff..."
 go build -o skiff ./cmd/skiff
-go build -o skiff-menu ./cmd/skiff-menu
+
+if [[ "$PLATFORM" == "darwin" ]]; then
+  go build -o skiff-menu ./cmd/skiff-menu
+fi
 
 # --- Install ---
 
 info "Installing to ${INSTALL_DIR}..."
 install -d "$INSTALL_DIR"
 install -m 755 skiff "$INSTALL_DIR/skiff"
-install -m 755 skiff-menu "$INSTALL_DIR/skiff-menu"
+
+if [[ "$PLATFORM" == "darwin" ]] && [[ -f skiff-menu ]]; then
+  install -m 755 skiff-menu "$INSTALL_DIR/skiff-menu"
+fi
 
 # --- Config ---
 
@@ -59,11 +84,24 @@ else
   info "Built successfully. Add ${INSTALL_DIR} to your PATH if needed."
 fi
 
-cat <<'MSG'
+if [[ "$PLATFORM" == "linux" ]]; then
+  cat <<'MSG'
 
 Next steps:
   skiff init          Generate a starter config
   skiff daemon        Start the control plane
-  skiff install       Auto-start on login
+  skiff install       Auto-start on login (systemd --user)
 
+Note: skiff uses Docker on Linux. Runtime is auto-detected.
 MSG
+else
+  cat <<'MSG'
+
+Next steps:
+  skiff init          Generate a starter config
+  skiff daemon        Start the control plane
+  skiff install       Auto-start on login (launchd)
+
+Note: skiff auto-detects Apple Containers when available, otherwise uses Docker.
+MSG
+fi

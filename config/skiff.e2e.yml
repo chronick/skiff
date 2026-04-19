@@ -1,0 +1,44 @@
+version: 1
+
+# Minimal e2e test config for Linux/Docker smoke testing.
+# Used by scripts/test-linux-e2e.sh — all paths under /tmp.
+
+paths:
+  base: /tmp/skiff-e2e
+  socket: /tmp/skiff-e2e/skiff.sock
+  logs: /tmp/skiff-e2e/logs
+  state_file: /tmp/skiff-e2e/skiff-state.json
+
+daemon:
+  status_poll_interval_secs: 2
+  log_buffer_lines: 200
+  config_watch: false
+  shutdown_timeout_secs: 5
+  listen: "127.0.0.1:19100"
+  auth_token: "e2e-test-token"
+
+dns:
+  enabled: false
+
+# Native service — keeps running so `skiff ps` has something to show.
+services:
+  hello:
+    command: ["sh", "-c", "while true; do echo 'hello from skiff'; sleep 5; done"]
+    restart_policy: always
+    health_check:
+      type: command
+      command: ["true"]
+      interval_secs: 5
+
+# Docker container — verifies runtime auto-detection actually pulls and runs.
+# nginx:alpine has a built-in long-running process so no command override needed.
+containers:
+  hello-docker:
+    image: nginx:alpine
+    ports:
+      - "18080:80"
+    restart_policy: always
+    health_check:
+      type: http
+      url: "http://localhost:18080/"
+      interval_secs: 5

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goos "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/chronick/skiff/internal/config"
 	"github.com/chronick/skiff/internal/daemon"
 	"github.com/chronick/skiff/internal/plist"
+	"github.com/chronick/skiff/internal/systemd"
 	"github.com/chronick/skiff/internal/tui"
 )
 
@@ -39,8 +41,8 @@ var (
 func main() {
 	root := &cobra.Command{
 		Use:   "skiff",
-		Short: "Container orchestration for macOS",
-		Long:  "skiff is a lightweight container orchestration layer for macOS with health-aware lifecycle management, scheduling, and service discovery.",
+		Short: "Container orchestration for macOS and Linux",
+		Long:  "skiff is a lightweight container orchestration layer with health-aware lifecycle management, scheduling, and service discovery. Supports Apple Containers on macOS and Docker on Linux.",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if configPath == "" {
 				configPath = findConfig()
@@ -702,7 +704,7 @@ func runNowCmd() *cobra.Command {
 func installCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install skiff daemon and menu bar app as launchd agents",
+		Short: "Install skiff daemon as a login service (launchd on macOS, systemd on Linux)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -719,39 +721,48 @@ func installCmd() *cobra.Command {
 				return err
 			}
 
-			// Ensure logs directory exists
 			if err := os.MkdirAll(cfg.Paths.Logs, 0755); err != nil {
 				return fmt.Errorf("creating logs dir: %w", err)
 			}
 
-			// Install daemon agent
-			daemonAgent, err := plist.Generate(binaryPath, absConfig, cfg.Paths.Logs)
-			if err != nil {
-				return err
-			}
-			if err := plist.InstallAgent(daemonAgent); err != nil {
-				return err
-			}
-			daemonPath, _ := plist.PlistPath()
-			green.Printf("  Installed daemon: %s\n", daemonPath)
-
-			// Install menu bar agent
-			menuBinary := filepath.Join(filepath.Dir(binaryPath), "skiff-menu")
-			if _, err := os.Stat(menuBinary); err == nil {
-				menuAgent, err := plist.GenerateMenu(menuBinary, cfg.Paths.Socket, cfg.Paths.Logs)
+			if goos.GOOS == "darwin" {
+				daemonAgent, err := plist.Generate(binaryPath, absConfig, cfg.Paths.Logs)
 				if err != nil {
 					return err
 				}
-				if err := plist.InstallAgent(menuAgent); err != nil {
-					return fmt.Errorf("installing menu agent: %w", err)
+				if err := plist.InstallAgent(daemonAgent); err != nil {
+					return err
 				}
-				menuPath, _ := plist.MenuPlistPath()
-				green.Printf("  Installed menu:   %s\n", menuPath)
-			} else {
-				yellow.Println("  Skipped menu bar app (skiff-menu not found next to skiff binary)")
-			}
+				daemonPath, _ := plist.PlistPath()
+				green.Printf("  Installed daemon: %s\n", daemonPath)
 
-			green.Println("  Loaded into launchd — skiff starts on login")
+				menuBinary := filepath.Join(filepath.Dir(binaryPath), "skiff-menu")
+				if _, err := os.Stat(menuBinary); err == nil {
+					menuAgent, err := plist.GenerateMenu(menuBinary, cfg.Paths.Socket, cfg.Paths.Logs)
+					if err != nil {
+						return err
+					}
+					if err := plist.InstallAgent(menuAgent); err != nil {
+						return fmt.Errorf("installing menu agent: %w", err)
+					}
+					menuPath, _ := plist.MenuPlistPath()
+					green.Printf("  Installed menu:   %s\n", menuPath)
+				} else {
+					yellow.Println("  Skipped menu bar app (skiff-menu not found next to skiff binary)")
+				}
+				green.Println("  Loaded into launchd — skiff starts on login")
+			} else {
+				unit, err := systemd.Generate(binaryPath, absConfig, cfg.Paths.Logs)
+				if err != nil {
+					return err
+				}
+				if err := systemd.InstallAgent(unit); err != nil {
+					return err
+				}
+				unitPath, _ := systemd.UnitPath()
+				green.Printf("  Installed unit:   %s\n", unitPath)
+				green.Println("  Enabled via systemd --user — skiff starts on login")
+			}
 			return nil
 		},
 	}
@@ -760,19 +771,26 @@ func installCmd() *cobra.Command {
 func uninstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove skiff daemon and menu bar app from launchd",
+		Short: "Remove skiff daemon login service (launchd on macOS, systemd on Linux)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := plist.UnloadAgent(plist.MenuLabel); err != nil {
-				yellow.Printf("  Warning: %v\n", err)
-			} else if plist.MenuExists() {
-				green.Println("  Uninstalled skiff menu bar app")
+			if goos.GOOS == "darwin" {
+				if err := plist.UnloadAgent(plist.MenuLabel); err != nil {
+					yellow.Printf("  Warning: %v\n", err)
+				} else if plist.MenuExists() {
+					green.Println("  Uninstalled skiff menu bar app")
+				}
+				if err := plist.UnloadAgent(plist.DaemonLabel); err != nil {
+					return err
+				}
+				green.Println("  Uninstalled skiff daemon")
+				green.Println("  Removed from launchd")
+			} else {
+				if err := systemd.UnloadAgent(systemd.DaemonLabel); err != nil {
+					return err
+				}
+				green.Println("  Uninstalled skiff daemon")
+				green.Println("  Removed from systemd --user")
 			}
-
-			if err := plist.UnloadAgent(plist.DaemonLabel); err != nil {
-				return err
-			}
-			green.Println("  Uninstalled skiff daemon")
-			green.Println("  Removed from launchd")
 			return nil
 		},
 	}
