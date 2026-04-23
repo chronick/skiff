@@ -108,15 +108,24 @@ func (s *pidStore) Snapshot() []pidRecord {
 	return recs
 }
 
-// ReapOrphans inspects the persisted pid file and kills any processes that
-// (a) are still alive, and (b) look like supervised children from a prior
-// daemon (their command argv0 matches the recorded value). After reaping it
-// truncates the pid file. Returns the names of services whose orphans were
-// killed, and a warning slice for processes that we could not verify or kill.
+// ReapOrphans inspects the persisted pid file and kills any processes left
+// behind by an ungraceful prior daemon. Two failure modes are covered:
 //
-// The verification step (matching command argv0 via `ps`) protects against
-// PID reuse: if the OS handed our old PID to an unrelated process between
-// daemon shutdown and startup, we leave it alone and log a warning.
+//  1. The supervised wrapper itself (e.g. `uv run X`) is still alive — happens
+//     when the daemon was hard-killed before it could SIGTERM its children.
+//     We verify by matching argv0 (defends against PID reuse) and then kill
+//     the whole process group.
+//
+//  2. The wrapper has exited but its child (the real server, e.g. python
+//     running litellm or vault-mcp) is still alive in the wrapper's old
+//     process group, holding the listening port. macOS re-parents the
+//     orphan to launchd, but the pgid lingers as long as a member is
+//     alive. We detect this by signal-probing -pgid, and reap by sending
+//     SIGTERM/SIGKILL to the same -pgid.
+//
+// After processing each record the entry is removed from the file regardless
+// of outcome, so a stuck record can't keep flagging the same dead process
+// forever. Returns the names of services whose orphans were killed.
 func (s *Supervisor) ReapOrphans() (killed []string) {
 	if s.pids == nil {
 		return nil
@@ -131,79 +140,99 @@ func (s *Supervisor) ReapOrphans() (killed []string) {
 			_ = s.pids.Remove(rec.Name)
 			continue
 		}
-		alive, err := isProcessAlive(rec.PID)
-		if err != nil {
-			s.logger.Warn("orphan check failed", "name", rec.Name, "pid", rec.PID, "error", err)
-			_ = s.pids.Remove(rec.Name)
-			continue
+
+		groupID := rec.PGID
+		if groupID == 0 {
+			groupID = rec.PID
 		}
-		if !alive {
+
+		leaderAlive, _ := isProcessAlive(rec.PID)
+		groupAlive := isGroupAlive(groupID)
+
+		if !leaderAlive && !groupAlive {
+			// Nothing left from the previous daemon for this name.
 			_ = s.pids.Remove(rec.Name)
 			continue
 		}
 
-		actual, err := processCommand(rec.PID)
-		if err != nil {
-			// Could not verify; safer to skip than to kill the wrong pid.
-			s.logger.Warn("orphan reap skipped: could not read command",
-				"name", rec.Name, "pid", rec.PID, "error", err)
-			_ = s.pids.Remove(rec.Name)
-			continue
-		}
-		if !commandsMatch(rec.Command, actual) {
-			s.logger.Warn("orphan reap skipped: pid reused by unrelated process",
-				"name", rec.Name, "pid", rec.PID,
-				"expected_argv0", rec.Command, "actual_command", actual)
-			_ = s.pids.Remove(rec.Name)
-			continue
+		// If the leader is alive, verify it's still our process before
+		// touching it (PID reuse defense). If the leader is dead but the
+		// group has stragglers (the wrapper-died-child-survived case),
+		// the pgid identifies *our* old group as long as its surviving
+		// members keep it alive — pgid is safer than pid for that test.
+		if leaderAlive {
+			actual, err := processCommand(rec.PID)
+			if err != nil {
+				s.logger.Warn("orphan reap skipped: could not read command",
+					"name", rec.Name, "pid", rec.PID, "error", err)
+				_ = s.pids.Remove(rec.Name)
+				continue
+			}
+			if !commandsMatch(rec.Command, actual) {
+				s.logger.Warn("orphan reap skipped: pid reused by unrelated process",
+					"name", rec.Name, "pid", rec.PID,
+					"expected_argv0", rec.Command, "actual_command", actual)
+				_ = s.pids.Remove(rec.Name)
+				continue
+			}
+			s.logger.Warn("reaping orphan from previous daemon",
+				"name", rec.Name, "pid", rec.PID, "command", actual, "scope", "group")
+		} else {
+			s.logger.Warn("reaping orphan group from previous daemon (leader dead, child still alive)",
+				"name", rec.Name, "pgid", groupID, "expected_argv0", rec.Command)
 		}
 
-		s.logger.Warn("reaping orphan from previous daemon",
-			"name", rec.Name, "pid", rec.PID, "command", actual)
-
-		killOrphan(rec, s.logger)
+		killOrphanGroup(groupID, rec.Name, s.logger)
 		_ = s.pids.Remove(rec.Name)
 		killed = append(killed, rec.Name)
 	}
 	return killed
 }
 
-// killOrphan sends SIGTERM to the process group, waits up to 5s for exit,
-// then escalates to SIGKILL.
-func killOrphan(rec pidRecord, logger *slog.Logger) {
-	pgid := rec.PGID
-	if pgid == 0 {
-		if pg, err := syscall.Getpgid(rec.PID); err == nil {
-			pgid = pg
-		} else {
-			pgid = rec.PID
-		}
+// isGroupAlive returns true if at least one process is still a member of
+// the given process group. POSIX kill(-pgid, 0) returns ESRCH when the
+// group has no members.
+func isGroupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
 	}
+	err := syscall.Kill(-pgid, syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, syscall.ESRCH) {
+		return false
+	}
+	// EPERM means there's a process we can't signal — treat as alive.
+	return true
+}
 
+// killOrphanGroup sends SIGTERM to every process in the given pgid, waits
+// up to 5s for the group to drain, then escalates to SIGKILL. Polls via
+// kill(-pgid, 0) — the group is empty once that returns ESRCH.
+func killOrphanGroup(pgid int, name string, logger *slog.Logger) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		alive, err := isProcessAlive(rec.PID)
-		if err != nil || !alive {
+		if !isGroupAlive(pgid) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	logger.Warn("orphan did not exit after SIGTERM, escalating to SIGKILL",
-		"name", rec.Name, "pid", rec.PID)
+	logger.Warn("orphan group did not drain after SIGTERM, escalating to SIGKILL",
+		"name", name, "pgid", pgid)
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		alive, err := isProcessAlive(rec.PID)
-		if err != nil || !alive {
+		if !isGroupAlive(pgid) {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	logger.Error("orphan still alive after SIGKILL", "name", rec.Name, "pid", rec.PID)
+	logger.Error("orphan group still has members after SIGKILL", "name", name, "pgid", pgid)
 }
 
 // isProcessAlive returns true if the given PID exists and we can signal it.

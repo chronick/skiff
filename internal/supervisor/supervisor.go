@@ -220,16 +220,34 @@ func (s *Supervisor) supervise(parentCtx context.Context, name string, cfg confi
 			logFile.Close()
 		}
 
+		s.mu.Lock()
+		proc := s.processes[name]
+		isStopping := proc != nil && proc.stopping
+		s.mu.Unlock()
+
+		// Sweep the process group for stragglers. Wrappers like `uv run X`
+		// fork a child that inherits the wrapper's pgid — when the wrapper
+		// exits (or is SIGTERM'd), the child gets re-parented to launchd
+		// but the pgid lingers as long as the child is alive. SIGKILL to
+		// -pgid catches them. With Setpgid:true the leader's pgid==pid,
+		// so we can just use pid here even after the leader is gone.
+		if isStopping {
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if err := syscall.Kill(-pid, syscall.Signal(0)); err != nil {
+					break // group is empty
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+
 		// Drop PID record now that the process is gone — keeps the file
 		// from accumulating stale entries while the supervise loop iterates.
 		if s.pids != nil {
 			_ = s.pids.Remove(name)
 		}
-
-		s.mu.Lock()
-		proc := s.processes[name]
-		isStopping := proc != nil && proc.stopping
-		s.mu.Unlock()
 
 		// Check if we were asked to stop
 		if isStopping || parentCtx.Err() != nil {
