@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	goos "runtime"
 	"strings"
 	"sync"
@@ -67,7 +68,11 @@ func New(cfg *config.Config, configPath string, replicaGroups []config.ReplicaGr
 	state := status.NewSharedState()
 	r := &runner.ExecRunner{}
 
-	sup := supervisor.New(state, logs, cfg.Paths.Logs, logger)
+	pidFilePath := ""
+	if cfg.Paths.Base != "" {
+		pidFilePath = filepath.Join(cfg.Paths.Base, "supervised.json")
+	}
+	sup := supervisor.New(state, logs, cfg.Paths.Logs, pidFilePath, logger)
 	sched := scheduler.New(state, logs, cfg.Paths.StateFile, logger)
 	hc := health.NewChecker(state, logs, r, logger)
 
@@ -106,22 +111,30 @@ func New(cfg *config.Config, configPath string, replicaGroups []config.ReplicaGr
 		prevStats:  make(map[string]prevStatsSample),
 	}
 
-	// Wire up health check auto-restart callback
+	// Wire up health check auto-restart callback. Reads from d.cfg under
+	// RLock so that auto-restarts after `apply` reload pick up the new
+	// service/container config rather than the snapshot captured at New().
 	hc.OnUnhealthy = func(name string) {
 		rs, ok := state.GetResource(name)
 		if !ok {
 			return
 		}
 		logger.Warn("auto-restarting unhealthy resource", "name", name)
+
+		d.cfgMu.RLock()
+		svcCfg, hasSvc := d.cfg.Services[name]
+		cCfg, hasCont := d.cfg.Containers[name]
+		d.cfgMu.RUnlock()
+
 		switch rs.Type {
 		case status.TypeService:
 			_ = sup.Stop(name)
-			if svcCfg, ok := cfg.Services[name]; ok {
+			if hasSvc {
 				_ = sup.Start(context.Background(), name, svcCfg)
 			}
 		case status.TypeContainer:
 			_ = rt.Stop(context.Background(), name)
-			if cCfg, ok := cfg.Containers[name]; ok {
+			if hasCont {
 				rtCfg := containerToRuntimeConfig(name, cCfg)
 				_ = rt.Run(context.Background(), name, rtCfg)
 			}
@@ -167,6 +180,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.logger.Info("stopping orphan container", "name", c.Name)
 			_ = d.runtime.Stop(ctx, c.Name)
 		}
+	}
+
+	// Reap orphaned native-service processes left behind by a previous
+	// daemon that was killed before it could clean up. Without this, a
+	// `launchctl kickstart -k` (SIGKILL) leaves children listening on
+	// their ports; the new daemon then hits "address already in use" on
+	// every restart attempt and pegs into a crash loop.
+	if killed := d.supervisor.ReapOrphans(); len(killed) > 0 {
+		d.logger.Info("reaped orphan service processes from previous daemon", "names", killed)
 	}
 
 	// Start DNS

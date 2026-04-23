@@ -42,7 +42,7 @@ func newTestDaemon(cfg *config.Config) (*Daemon, *testutil.MockContainerRuntime)
 	state := status.NewSharedState()
 	mockRT := testutil.NewMockRuntime()
 	r := &runner.ExecRunner{}
-	sup := supervisor.New(state, logs, cfg.Paths.Logs, logger)
+	sup := supervisor.New(state, logs, cfg.Paths.Logs, "", logger)
 	sched := scheduler.New(state, logs, "/tmp/skiff-test-sched.json", logger)
 	hc := health.NewChecker(state, logs, r, logger)
 

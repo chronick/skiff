@@ -48,7 +48,7 @@ func newTestDaemonWithDir(t *testing.T, cfg *config.Config) (*Daemon, *testutil.
 	state := status.NewSharedState()
 	mockRT := testutil.NewMockRuntime()
 	r := &runner.ExecRunner{}
-	sup := supervisor.New(state, logs, cfg.Paths.Logs, logger)
+	sup := supervisor.New(state, logs, cfg.Paths.Logs, "", logger)
 	sched := scheduler.New(state, logs, cfg.Paths.StateFile, logger)
 	hc := health.NewChecker(state, logs, r, logger)
 	adhocTracker := NewAdhocTracker(state, mockRT, logger)

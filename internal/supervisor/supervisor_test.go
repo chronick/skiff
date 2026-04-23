@@ -134,7 +134,7 @@ func newTestSupervisor(factory CmdFactory) *Supervisor {
 	state := status.NewSharedState()
 	logs := logbuf.New(100)
 	logger := newDiscardLogger()
-	return New(state, logs, "", logger, factory)
+	return New(state, logs, "", "", logger, factory)
 }
 
 func newDiscardLogger() *slog.Logger {
@@ -329,12 +329,13 @@ func TestStop_SetsStopping(t *testing.T) {
 	cmd := f.waitForCmd(t, 2*time.Second)
 	time.Sleep(50 * time.Millisecond)
 
-	// Stop should signal and clean up
+	// Stop is synchronous: it waits for the supervise goroutine to exit.
+	// Unblock cmd.Wait() in the background so Stop can return.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cmd.exit(nil)
+	}()
 	sup.Stop("svc1")
-
-	// Let the Wait unblock
-	cmd.exit(nil)
-	time.Sleep(100 * time.Millisecond)
 
 	if sup.IsRunning("svc1") {
 		t.Error("expected service to not be running after Stop")
@@ -360,9 +361,11 @@ func TestKill_SendsKill(t *testing.T) {
 	cmd := f.waitForCmd(t, 2*time.Second)
 	time.Sleep(50 * time.Millisecond)
 
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cmd.exit(nil)
+	}()
 	sup.Kill("svc1")
-	cmd.exit(nil)
-	time.Sleep(100 * time.Millisecond)
 
 	if !cmd.killed {
 		t.Error("expected Kill to be called on process")
@@ -388,10 +391,12 @@ func TestStopAll(t *testing.T) {
 	cmd2 := f.waitForCmd(t, 2*time.Second)
 	time.Sleep(50 * time.Millisecond)
 
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cmd1.exit(nil)
+		cmd2.exit(nil)
+	}()
 	sup.StopAll()
-	cmd1.exit(nil)
-	cmd2.exit(nil)
-	time.Sleep(100 * time.Millisecond)
 
 	if sup.IsRunning("svc1") || sup.IsRunning("svc2") {
 		t.Error("expected all services to be stopped")
@@ -513,7 +518,7 @@ func TestState_TransitionsOnLifecycle(t *testing.T) {
 	f := newMockFactory()
 	state := status.NewSharedState()
 	logs := logbuf.New(100)
-	sup := New(state, logs, "", newDiscardLogger(), f)
+	sup := New(state, logs, "", "", newDiscardLogger(), f)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
