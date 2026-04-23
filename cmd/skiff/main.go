@@ -107,7 +107,7 @@ func daemonCmd() *cobra.Command {
 				return daemonizeProcess(cfg)
 			}
 
-			d := daemon.New(cfg, groups, logger)
+			d := daemon.New(cfg, configPath, groups, logger)
 			return d.Run(context.Background())
 		},
 	}

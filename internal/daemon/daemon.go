@@ -29,6 +29,9 @@ import (
 // Daemon is the main control plane process.
 type Daemon struct {
 	cfg           *config.Config
+	cfgMu         sync.RWMutex // guards cfg + replicaGroups across apply reloads
+	configPath    string       // absolute path to skiff.yml, used for hot-reload on apply
+	runCtx        context.Context // long-lived daemon context, used to start schedules added by apply
 	replicaGroups []config.ReplicaGroup // template→expanded name mapping
 	state         *status.SharedState
 	logs          *logbuf.LogBuffer
@@ -56,8 +59,10 @@ type prevStatsSample struct {
 }
 
 // New creates a Daemon from config. replicaGroups maps template names to
-// their expanded container names (from LoadRaw + ReplicaGroups).
-func New(cfg *config.Config, replicaGroups []config.ReplicaGroup, logger *slog.Logger) *Daemon {
+// their expanded container names (from LoadRaw + ReplicaGroups). configPath
+// is retained so `apply` can hot-reload the config (and its sibling .env)
+// to reconcile schedule definitions without a daemon restart.
+func New(cfg *config.Config, configPath string, replicaGroups []config.ReplicaGroup, logger *slog.Logger) *Daemon {
 	logs := logbuf.New(cfg.Daemon.LogBufferLines)
 	state := status.NewSharedState()
 	r := &runner.ExecRunner{}
@@ -85,6 +90,7 @@ func New(cfg *config.Config, replicaGroups []config.ReplicaGroup, logger *slog.L
 
 	d := &Daemon{
 		cfg:           cfg,
+		configPath:    configPath,
 		replicaGroups: replicaGroups,
 		state:         state,
 		logs:       logs,
@@ -174,6 +180,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.startAll(sigCtx); err != nil {
 		d.logger.Error("failed to start all resources", "error", err)
 	}
+
+	// Retain the long-lived signal context so handleApply can attach
+	// freshly-spawned schedule goroutines to the daemon's lifetime
+	// rather than the (short-lived) HTTP request context.
+	d.runCtx = sigCtx
 
 	// Start scheduler
 	if len(d.cfg.Schedules) > 0 {

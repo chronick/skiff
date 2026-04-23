@@ -163,6 +163,14 @@ func (s *SharedState) SetSchedule(ss *ScheduleStatus) {
 	s.Timestamp = time.Now()
 }
 
+// RemoveSchedule deletes a schedule status. No-op if absent.
+func (s *SharedState) RemoveSchedule(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Schedules, name)
+	s.Timestamp = time.Now()
+}
+
 // GetSchedule returns a copy of a schedule status.
 func (s *SharedState) GetSchedule(name string) (*ScheduleStatus, bool) {
 	s.mu.RLock()

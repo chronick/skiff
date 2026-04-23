@@ -181,6 +181,92 @@ func TestTriggerNow_AlreadyTriggered(t *testing.T) {
 	}
 }
 
+// --- Reconcile ---
+
+func TestReconcile_StartsNew(t *testing.T) {
+	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "", testutil.NewTestLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started, restarted, stopped := s.Reconcile(ctx, map[string]config.ScheduleConfig{
+		"backup": {Command: []string{"true"}, IntervalSeconds: 3600},
+	})
+
+	if len(started) != 1 || started[0] != "backup" {
+		t.Errorf("expected started=[backup], got %v", started)
+	}
+	if len(restarted) != 0 || len(stopped) != 0 {
+		t.Errorf("expected no restarts/stops, got restarted=%v stopped=%v", restarted, stopped)
+	}
+	s.mu.Lock()
+	_, hasTrigger := s.triggers["backup"]
+	_, hasHash := s.hashes["backup"]
+	s.mu.Unlock()
+	if !hasTrigger || !hasHash {
+		t.Error("expected trigger + hash to be registered for new schedule")
+	}
+}
+
+func TestReconcile_RestartsChanged(t *testing.T) {
+	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "", testutil.NewTestLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Reconcile(ctx, map[string]config.ScheduleConfig{
+		"backup": {Command: []string{"true"}, IntervalSeconds: 3600},
+	})
+
+	_, restarted, _ := s.Reconcile(ctx, map[string]config.ScheduleConfig{
+		"backup": {Command: []string{"true"}, IntervalSeconds: 7200}, // interval changed
+	})
+
+	if len(restarted) != 1 || restarted[0] != "backup" {
+		t.Errorf("expected restarted=[backup], got %v", restarted)
+	}
+}
+
+func TestReconcile_NoOpForUnchanged(t *testing.T) {
+	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "", testutil.NewTestLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := map[string]config.ScheduleConfig{
+		"backup": {Command: []string{"true"}, IntervalSeconds: 3600},
+	}
+	s.Reconcile(ctx, cfg)
+
+	started, restarted, stopped := s.Reconcile(ctx, cfg)
+	if len(started)+len(restarted)+len(stopped) != 0 {
+		t.Errorf("expected no changes on identical reconcile, got started=%v restarted=%v stopped=%v",
+			started, restarted, stopped)
+	}
+}
+
+func TestReconcile_StopsRemoved(t *testing.T) {
+	s := New(testutil.NewTestState(), testutil.NewTestLogBuffer(), "", testutil.NewTestLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Reconcile(ctx, map[string]config.ScheduleConfig{
+		"backup":  {Command: []string{"true"}, IntervalSeconds: 3600},
+		"cleanup": {Command: []string{"true"}, IntervalSeconds: 3600},
+	})
+
+	_, _, stopped := s.Reconcile(ctx, map[string]config.ScheduleConfig{
+		"backup": {Command: []string{"true"}, IntervalSeconds: 3600},
+	})
+
+	if len(stopped) != 1 || stopped[0] != "cleanup" {
+		t.Errorf("expected stopped=[cleanup], got %v", stopped)
+	}
+	s.mu.Lock()
+	_, hasTrigger := s.triggers["cleanup"]
+	s.mu.Unlock()
+	if hasTrigger {
+		t.Error("expected cleanup trigger to be deregistered")
+	}
+}
+
 // --- State persistence ---
 
 func TestStatePersistence_SaveLoad(t *testing.T) {

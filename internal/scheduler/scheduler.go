@@ -20,6 +20,7 @@ type Scheduler struct {
 	mu        sync.Mutex
 	triggers  map[string]chan struct{}
 	cancels   map[string]context.CancelFunc
+	hashes    map[string]string // config hash per running schedule, for change detection
 	state     *status.SharedState
 	logs      *logbuf.LogBuffer
 	stateFile string
@@ -31,6 +32,7 @@ func New(state *status.SharedState, logs *logbuf.LogBuffer, stateFile string, lo
 	return &Scheduler{
 		triggers:  make(map[string]chan struct{}),
 		cancels:   make(map[string]context.CancelFunc),
+		hashes:    make(map[string]string),
 		state:     state,
 		logs:      logs,
 		stateFile: stateFile,
@@ -40,22 +42,57 @@ func New(state *status.SharedState, logs *logbuf.LogBuffer, stateFile string, lo
 
 // Start begins running all schedules.
 func (s *Scheduler) Start(ctx context.Context, schedules map[string]config.ScheduleConfig) {
+	s.Reconcile(ctx, schedules)
+}
+
+// Reconcile updates running schedules to match the desired state.
+// Schedules absent from `schedules` are stopped; new entries are started;
+// existing entries with a changed config are restarted. Returns the names
+// affected by each action.
+func (s *Scheduler) Reconcile(ctx context.Context, schedules map[string]config.ScheduleConfig) (started, restarted, stopped []string) {
 	persisted := s.loadState()
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Stop schedules removed from config.
+	for name := range s.cancels {
+		if _, ok := schedules[name]; ok {
+			continue
+		}
+		s.cancels[name]()
+		delete(s.cancels, name)
+		delete(s.triggers, name)
+		delete(s.hashes, name)
+		s.state.RemoveSchedule(name)
+		stopped = append(stopped, name)
+	}
+
+	// Start new and restart changed schedules.
 	for name, cfg := range schedules {
+		newHash := config.Hash(cfg)
+		if existing, ok := s.hashes[name]; ok && existing == newHash {
+			continue
+		}
+
+		isRestart := false
+		if cancel, ok := s.cancels[name]; ok {
+			cancel()
+			delete(s.cancels, name)
+			delete(s.triggers, name)
+			isRestart = true
+		}
+
 		triggerCh := make(chan struct{}, 1)
 		schedCtx, cancel := context.WithCancel(ctx)
-
-		s.mu.Lock()
 		s.triggers[name] = triggerCh
 		s.cancels[name] = cancel
-		s.mu.Unlock()
+		s.hashes[name] = newHash
 
 		var lastRun *time.Time
 		if ps, ok := persisted[name]; ok {
 			lastRun = ps.LastRun
 		}
-
 		s.state.SetSchedule(&status.ScheduleStatus{
 			Name:       name,
 			LastRun:    lastRun,
@@ -64,7 +101,14 @@ func (s *Scheduler) Start(ctx context.Context, schedules map[string]config.Sched
 		})
 
 		go s.runSchedule(schedCtx, name, cfg, triggerCh, lastRun)
+
+		if isRestart {
+			restarted = append(restarted, name)
+		} else {
+			started = append(started, name)
+		}
 	}
+	return
 }
 
 // TriggerNow triggers a schedule to run immediately.
@@ -94,6 +138,7 @@ func (s *Scheduler) StopAll() {
 	}
 	s.triggers = make(map[string]chan struct{})
 	s.cancels = make(map[string]context.CancelFunc)
+	s.hashes = make(map[string]string)
 }
 
 func (s *Scheduler) runSchedule(ctx context.Context, name string, cfg config.ScheduleConfig, triggerCh chan struct{}, lastRun *time.Time) {

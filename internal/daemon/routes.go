@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -259,12 +260,33 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 
 	var actions []action
 
+	// Hot-reload config from disk so apply picks up YAML edits and
+	// new values in the sibling .env file. Without this the in-memory
+	// cfg from daemon startup is authoritative and apply is a no-op
+	// for any change other than restart.
+	cfg := d.cfg
+	if d.configPath != "" {
+		newCfg, reloadErr := config.Load(d.configPath)
+		if reloadErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": fmt.Sprintf("reload config: %s", reloadErr),
+			})
+			return
+		}
+		if !dryRun {
+			d.cfgMu.Lock()
+			d.cfg = newCfg
+			d.cfgMu.Unlock()
+		}
+		cfg = newCfg
+	}
+
 	// Compute what needs to change
 	allConfigNames := map[string]bool{}
-	for name := range d.cfg.Services {
+	for name := range cfg.Services {
 		allConfigNames[name] = true
 	}
-	for name := range d.cfg.Containers {
+	for name := range cfg.Containers {
 		allConfigNames[name] = true
 	}
 
@@ -278,7 +300,7 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for name, svcCfg := range d.cfg.Services {
+	for name, svcCfg := range cfg.Services {
 		rs, ok := d.state.GetResource(name)
 		newHash := config.Hash(svcCfg)
 		if !ok || rs.State == status.StateStopped {
@@ -289,7 +311,7 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 			actions = append(actions, action{Resource: name, Action: "(none)", Reason: "unchanged"})
 		}
 	}
-	for name, cCfg := range d.cfg.Containers {
+	for name, cCfg := range cfg.Containers {
 		rs, ok := d.state.GetResource(name)
 		newHash := config.Hash(cCfg)
 		if !ok || rs.State == status.StateStopped {
@@ -319,12 +341,12 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 			}
 			d.state.RemoveResource(a.Resource)
 		case "start":
-			if svcCfg, ok := d.cfg.Services[a.Resource]; ok {
+			if svcCfg, ok := cfg.Services[a.Resource]; ok {
 				_ = d.supervisor.Start(ctx, a.Resource, svcCfg)
 				if svcCfg.HealthCheck != nil {
 					d.health.StartProbe(ctx, a.Resource, svcCfg.HealthCheck)
 				}
-			} else if cCfg, ok := d.cfg.Containers[a.Resource]; ok {
+			} else if cCfg, ok := cfg.Containers[a.Resource]; ok {
 				rtCfg := containerToRuntimeConfig(a.Resource, cCfg)
 				_ = d.runtime.Run(ctx, a.Resource, rtCfg)
 				d.state.SetResource(&status.ResourceStatus{
@@ -341,13 +363,13 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "restart":
-			if svcCfg, ok := d.cfg.Services[a.Resource]; ok {
+			if svcCfg, ok := cfg.Services[a.Resource]; ok {
 				_ = d.supervisor.Stop(a.Resource)
 				_ = d.supervisor.Start(ctx, a.Resource, svcCfg)
 				if svcCfg.HealthCheck != nil {
 					d.health.StartProbe(ctx, a.Resource, svcCfg.HealthCheck)
 				}
-			} else if cCfg, ok := d.cfg.Containers[a.Resource]; ok {
+			} else if cCfg, ok := cfg.Containers[a.Resource]; ok {
 				_ = d.runtime.Stop(ctx, a.Resource)
 				rtCfg := containerToRuntimeConfig(a.Resource, cCfg)
 				_ = d.runtime.Run(ctx, a.Resource, rtCfg)
@@ -365,6 +387,24 @@ func (d *Daemon) handleApply(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Reconcile schedules from the freshly loaded config. Use the daemon's
+	// long-lived runCtx — not the request ctx — so newly-spawned schedule
+	// goroutines outlive this HTTP call.
+	scheduleCtx := d.runCtx
+	if scheduleCtx == nil {
+		scheduleCtx = context.Background()
+	}
+	started, restarted, stopped := d.scheduler.Reconcile(scheduleCtx, cfg.Schedules)
+	for _, n := range started {
+		actions = append(actions, action{Resource: n, Action: "start", Reason: "new schedule"})
+	}
+	for _, n := range restarted {
+		actions = append(actions, action{Resource: n, Action: "restart", Reason: "schedule changed"})
+	}
+	for _, n := range stopped {
+		actions = append(actions, action{Resource: n, Action: "stop", Reason: "removed from config"})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"actions": actions})
