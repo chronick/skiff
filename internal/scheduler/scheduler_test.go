@@ -3,7 +3,9 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -601,6 +603,69 @@ func TestExecute_CustomTimeout(t *testing.T) {
 	if ss.LastResult != "success" {
 		t.Errorf("expected success, got %s", ss.LastResult)
 	}
+}
+
+func TestExecute_TimeoutKillsProcessGroup(t *testing.T) {
+	// Shorten the pipe-drain cap so a regression fails fast instead of waiting
+	// out the shipped 30s default.
+	origWaitDelay := killWaitDelay
+	killWaitDelay = 2 * time.Second
+	t.Cleanup(func() { killWaitDelay = origWaitDelay })
+
+	// The wrapper forks this script as a child. It holds two commands so the
+	// shell can't exec-replace itself — the unique path stays visible in ps.
+	script := filepath.Join(t.TempDir(), fmt.Sprintf("skiff-pgtest-%d.sh", time.Now().UnixNano()))
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntrap '' TERM\nsleep 600\n"), 0700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	state := testutil.NewTestState()
+	s := New(state, testutil.NewTestLogBuffer(), "", testutil.NewTestLogger())
+
+	cfg := config.ScheduleConfig{
+		Command:     []string{"sh", "-c", "trap '' TERM; " + script},
+		WorkingDir:  "/tmp",
+		TimeoutSecs: 2,
+	}
+
+	start := time.Now()
+	s.execute(context.Background(), "pgroup-job", cfg)
+	elapsed := time.Since(start)
+
+	// Timeout (2s) + kill + drain cap (2s), with grace.
+	if elapsed > 10*time.Second {
+		t.Errorf("expected execute to return shortly after timeout, took %v", elapsed)
+	}
+
+	ss, ok := state.GetSchedule("pgroup-job")
+	if !ok {
+		t.Fatal("expected schedule in state")
+	}
+	if ss.LastResult != "failed" {
+		t.Errorf("expected last_result 'failed' for killed command, got %s", ss.LastResult)
+	}
+
+	// The forked child must be gone too, not just the wrapper.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if !processMatching(t, script) {
+			return // passed
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child process %s survived the timeout kill", script)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// processMatching reports whether any running process has marker in its argv.
+func processMatching(t *testing.T, marker string) bool {
+	t.Helper()
+	out, err := exec.Command("ps", "-e", "-w", "-w", "-o", "args=").Output()
+	if err != nil {
+		t.Fatalf("ps: %v", err)
+	}
+	return strings.Contains(string(out), marker)
 }
 
 func TestExecute_SetsRunningStateDuringExecution(t *testing.T) {
