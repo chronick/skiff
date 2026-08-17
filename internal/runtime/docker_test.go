@@ -393,3 +393,235 @@ func TestDockerDeleteNetwork_NotFound(t *testing.T) {
 		t.Fatalf("expected idempotent success, got: %v", err)
 	}
 }
+
+func TestDockerCreateNetwork_Internal(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	if err := rt.CreateNetwork(context.Background(), "mynet", runtime.NetworkConfig{Internal: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	call, _ := runner.LastCall()
+	if !strings.Contains(strings.Join(call.Args, " "), "--internal") {
+		t.Errorf("expected --internal flag, got: %v", call.Args)
+	}
+}
+
+func TestDockerCreateNetwork_Error(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	runner.DefaultResult = testutil.MockResult{
+		Output: []byte("permission denied"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	if err := rt.CreateNetwork(context.Background(), "mynet", runtime.NetworkConfig{}); err == nil {
+		t.Fatal("expected error for non-idempotent failure")
+	}
+}
+
+func TestDockerDeleteNetwork_Error(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	runner.DefaultResult = testutil.MockResult{
+		Output: []byte("network has active endpoints"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	if err := rt.DeleteNetwork(context.Background(), "mynet"); err == nil {
+		t.Fatal("expected error for non-idempotent failure")
+	}
+}
+
+// --- Exec ---
+
+func TestDockerExec(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	runner.Results["docker exec web ls -la"] = testutil.MockResult{Output: []byte("total 0\n")}
+
+	out, err := rt.Exec(context.Background(), "web", []string{"ls", "-la"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "total 0\n" {
+		t.Errorf("expected command output, got %q", string(out))
+	}
+
+	call, _ := runner.LastCall()
+	if call.Name != "docker" {
+		t.Errorf("expected binary 'docker', got %q", call.Name)
+	}
+	if strings.Join(call.Args, " ") != "exec web ls -la" {
+		t.Errorf("unexpected args: %v", call.Args)
+	}
+}
+
+// --- InjectDNS / SetLimits ---
+
+func TestDockerInjectDNS_AppliedOnRun(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+
+	cfg := rt.InjectDNS(runtime.ContainerConfig{Image: "nginx:latest"}, "10.0.0.53", 5353)
+	if cfg.Image != "nginx:latest" {
+		t.Errorf("InjectDNS must not mutate the config image, got %q", cfg.Image)
+	}
+
+	if err := rt.Run(context.Background(), "web", cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	call, _ := runner.LastCall()
+	if !strings.Contains(strings.Join(call.Args, " "), "--dns 10.0.0.53") {
+		t.Errorf("expected --dns flag from InjectDNS, got: %v", call.Args)
+	}
+}
+
+func TestDockerSetLimits(t *testing.T) {
+	rt, _ := newDockerTestRuntime()
+
+	cfg := rt.SetLimits(runtime.ContainerConfig{}, runtime.ResourceLimits{CPUs: 1.5, Memory: "512m"})
+	if cfg.CPUs != 1.5 || cfg.Memory != "512m" {
+		t.Errorf("expected limits applied, got CPUs=%v Memory=%q", cfg.CPUs, cfg.Memory)
+	}
+
+	// Zero-valued limits must leave existing values untouched.
+	base := runtime.ContainerConfig{CPUs: 2, Memory: "1g"}
+	cfg = rt.SetLimits(base, runtime.ResourceLimits{})
+	if cfg.CPUs != 2 || cfg.Memory != "1g" {
+		t.Errorf("expected existing values preserved, got CPUs=%v Memory=%q", cfg.CPUs, cfg.Memory)
+	}
+}
+
+// --- Build / error paths ---
+
+func TestDockerBuild_DefaultContext(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	if err := rt.Build(context.Background(), "web", runtime.ContainerConfig{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	call, _ := runner.LastCall()
+	if call.Args[len(call.Args)-1] != "." {
+		t.Errorf("expected default context '.', got: %v", call.Args)
+	}
+}
+
+func TestDockerBuild_Error(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	runner.DefaultResult = testutil.MockResult{
+		Output: []byte("no such file"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	err := rt.Build(context.Background(), "web", runtime.ContainerConfig{})
+	if err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("expected build error carrying output, got: %v", err)
+	}
+}
+
+func TestDockerLogs_Error(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	runner.DefaultResult = testutil.MockResult{
+		Output: []byte("No such container"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	if _, err := rt.Logs(context.Background(), "web", 0); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// --- List / Inspect / Stats failure modes ---
+
+func TestDockerList_SkipsBlankLinesAndErrors(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	const key = "docker ps -a --filter label=skiff.managed=true --format json"
+
+	line, _ := json.Marshal(map[string]string{"Names": "web", "Image": "nginx", "State": "running"})
+	runner.Results[key] = testutil.MockResult{Output: []byte("\n" + string(line) + "\n\n")}
+	containers, err := rt.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(containers) != 1 {
+		t.Fatalf("expected blank lines skipped, got %d containers", len(containers))
+	}
+
+	runner.Results[key] = testutil.MockResult{Output: []byte("{not json}")}
+	if _, err := rt.List(context.Background()); err == nil {
+		t.Error("expected parse error for malformed NDJSON")
+	}
+
+	runner.Results[key] = testutil.MockResult{Err: fmt.Errorf("daemon not running")}
+	if _, err := rt.List(context.Background()); err == nil {
+		t.Error("expected error when docker ps fails")
+	}
+}
+
+func TestDockerInspect_FailureModes(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	const key = "docker inspect --format json web"
+
+	runner.Results[key] = testutil.MockResult{
+		Output: []byte("No such object: web"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	if _, err := rt.Inspect(context.Background(), "web"); err == nil {
+		t.Error("expected error when docker inspect fails")
+	}
+
+	runner.Results[key] = testutil.MockResult{Output: []byte("not json")}
+	if _, err := rt.Inspect(context.Background(), "web"); err == nil {
+		t.Error("expected parse error for malformed inspect output")
+	}
+
+	runner.Results[key] = testutil.MockResult{Output: []byte("[]")}
+	if _, err := rt.Inspect(context.Background(), "web"); err == nil {
+		t.Error("expected error for empty inspect array")
+	}
+}
+
+func TestDockerStats_FailureModes(t *testing.T) {
+	rt, runner := newDockerTestRuntime()
+	const key = "docker stats web --no-stream --format json"
+
+	runner.Results[key] = testutil.MockResult{
+		Output: []byte("No such container"),
+		Err:    fmt.Errorf("exit status 1"),
+	}
+	if _, err := rt.Stats(context.Background(), "web"); err == nil {
+		t.Error("expected error when docker stats fails")
+	}
+
+	runner.Results[key] = testutil.MockResult{Output: []byte("not json")}
+	if _, err := rt.Stats(context.Background(), "web"); err == nil {
+		t.Error("expected parse error for malformed stats output")
+	}
+}
+
+// TestDockerStats_MemUnits exercises every unit branch of the MemUsage parser
+// through the public Stats surface.
+func TestDockerStats_MemUnits(t *testing.T) {
+	cases := []struct {
+		name           string
+		memUsage       string
+		wantUse, wantL int64
+	}{
+		{"gibibytes", "1.5GiB / 4GiB", 1536, 4096},
+		{"mebibytes", "45.2MiB / 512MiB", 45, 512},
+		{"kibibytes", "512KiB / 2048KiB", 0, 2},
+		{"bytes", "1048576B / 2097152B", 1, 2},
+		{"no unit suffix", "45.2 / 512", 0, 0},
+		{"unparseable number", "abcMiB / xyzMiB", 0, 0},
+		{"malformed pair", "45.2MiB", 0, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, runner := newDockerTestRuntime()
+			data, _ := json.Marshal(map[string]string{
+				"CPUPerc": "0.5%", "MemUsage": tc.memUsage, "PIDs": "3",
+			})
+			runner.Results["docker stats web --no-stream --format json"] = testutil.MockResult{Output: data}
+
+			stats, err := rt.Stats(context.Background(), "web")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stats.MemUsageMB != tc.wantUse || stats.MemLimitMB != tc.wantL {
+				t.Errorf("MemUsage %q: got usage=%d limit=%d, want usage=%d limit=%d",
+					tc.memUsage, stats.MemUsageMB, stats.MemLimitMB, tc.wantUse, tc.wantL)
+			}
+		})
+	}
+}
