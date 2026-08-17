@@ -15,6 +15,12 @@ import (
 	"github.com/chronick/skiff/internal/status"
 )
 
+// killWaitDelay caps how long we wait for a killed command's output pipes to
+// close before giving up on them. Without it a leaked grandchild holding the
+// pipe open keeps a schedule "running" long past its timeout. Overridden by
+// tests; the shipped default is 30s.
+var killWaitDelay = 30 * time.Second
+
 // Scheduler manages internal scheduled jobs.
 type Scheduler struct {
 	mu        sync.Mutex
@@ -204,6 +210,11 @@ func (s *Scheduler) execute(ctx context.Context, name string, cfg config.Schedul
 	cmd := exec.CommandContext(execCtx, cfg.Command[0], cfg.Command[1:]...)
 	cmd.Dir = cfg.WorkingDir
 	cmd.Env = buildEnv(cfg.Env)
+	// Wrapper commands (npx, sh -c, ...) fork children that survive a kill
+	// aimed at the wrapper alone. Run the command in its own process group
+	// and kill the whole group on timeout/cancel.
+	setProcessGroup(cmd)
+	cmd.WaitDelay = killWaitDelay
 	output, err := cmd.CombinedOutput()
 
 	duration := time.Since(start)
