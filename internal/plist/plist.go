@@ -53,6 +53,13 @@ func MenuPlistPath() (string, error) {
 	return AgentPath(MenuLabel)
 }
 
+// launchctl runs the launchctl command and returns its combined output.
+// It is a package-level variable so tests can substitute a fake (launchctl
+// only exists on macOS).
+var launchctl = func(args ...string) ([]byte, error) {
+	return exec.Command("launchctl", args...).CombinedOutput()
+}
+
 // defaultPath returns a PATH that includes common binary locations.
 func defaultPath() string {
 	return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -111,7 +118,7 @@ func InstallAgent(agent *LaunchAgent) error {
 	}
 
 	// Load with launchctl
-	if out, err := exec.Command("launchctl", "load", path).CombinedOutput(); err != nil {
+	if out, err := launchctl("load", path); err != nil {
 		return fmt.Errorf("launchctl load %s: %w: %s", path, err, string(out))
 	}
 
@@ -130,7 +137,7 @@ func UnloadAgent(label string) error {
 	}
 
 	// Unload from launchctl (ignore errors if not loaded)
-	exec.Command("launchctl", "unload", path).Run()
+	launchctl("unload", path)
 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing plist %s: %w", path, err)
