@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chronick/skiff/internal/runtime"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 // adhocEntry tracks an ad-hoc container and its lifecycle options.

@@ -16,15 +16,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/dns"
-	"github.com/chronick/skiff/internal/health"
-	"github.com/chronick/skiff/internal/logbuf"
-	"github.com/chronick/skiff/internal/runner"
-	"github.com/chronick/skiff/internal/runtime"
-	"github.com/chronick/skiff/internal/scheduler"
-	"github.com/chronick/skiff/internal/status"
-	"github.com/chronick/skiff/internal/supervisor"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/dns"
+	"github.com/algonormative/skiff/internal/health"
+	"github.com/algonormative/skiff/internal/logbuf"
+	"github.com/algonormative/skiff/internal/runner"
+	"github.com/algonormative/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/scheduler"
+	"github.com/algonormative/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/supervisor"
 )
 
 // Daemon is the main control plane process.

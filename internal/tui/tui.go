@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/chronick/skiff/internal/client"
+	"github.com/algonormative/skiff/internal/client"
 )
 
 type viewMode int

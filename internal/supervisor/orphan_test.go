@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/skiff/internal/logbuf"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/logbuf"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 func TestPIDStore_RoundTrip(t *testing.T) {

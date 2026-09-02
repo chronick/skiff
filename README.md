@@ -1,12 +1,12 @@
 # skiff
 
-[![CI](https://github.com/chronick/skiff/actions/workflows/ci.yml/badge.svg)](https://github.com/chronick/skiff/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/chronick/skiff)](https://github.com/chronick/skiff/releases)
-[![Go version](https://img.shields.io/github/go-mod/go-version/chronick/skiff)](go.mod)
+[![CI](https://github.com/algonormative/skiff/actions/workflows/ci.yml/badge.svg)](https://github.com/algonormative/skiff/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/algonormative/skiff)](https://github.com/algonormative/skiff/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/algonormative/skiff)](go.mod)
 
 Container orchestration for macOS and Linux. Single binary, single YAML config.
 
-**Status:** current release [v0.2.1](https://github.com/chronick/skiff/releases) — pre-1.0, so the CLI and config format may still change between minor versions, but the daemon runs real day-to-day workloads and every push is gated by unit and end-to-end tests in CI.
+**Status:** current release [v0.2.1](https://github.com/algonormative/skiff/releases) — pre-1.0, so the CLI and config format may still change between minor versions, but the daemon runs real day-to-day workloads and every push is gated by unit and end-to-end tests in CI.
 
 skiff sits between docker-compose and Kubernetes — health-aware lifecycle management, scheduling, service discovery, and a control plane API. On macOS it uses [Apple Container Runtime](https://github.com/apple/container) when available, falling back to Docker. On Linux it uses Docker.
 
@@ -15,21 +15,21 @@ It also manages native services as child processes, making it a unified control 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chronick/skiff/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/algonormative/skiff/main/install.sh | bash
 ```
 
-Or download a prebuilt binary from the [releases page](https://github.com/chronick/skiff/releases) — each release ships `skiff-darwin-arm64`, `skiff-darwin-amd64`, `skiff-linux-amd64`, and `skiff-linux-arm64`:
+Or download a prebuilt binary from the [releases page](https://github.com/algonormative/skiff/releases) — each release ships `skiff-darwin-arm64`, `skiff-darwin-amd64`, `skiff-linux-amd64`, and `skiff-linux-arm64`:
 
 ```bash
 # Example: Apple Silicon macOS
-curl -fL -o skiff https://github.com/chronick/skiff/releases/latest/download/skiff-darwin-arm64
+curl -fL -o skiff https://github.com/algonormative/skiff/releases/latest/download/skiff-darwin-arm64
 chmod +x skiff && sudo mv skiff /usr/local/bin/
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/chronick/skiff.git
+git clone https://github.com/algonormative/skiff.git
 cd skiff
 make install
 ```
@@ -39,14 +39,14 @@ Or ask Claude to set it up for you:
 **Minimal** — install skiff and create a config for your services:
 ```
 Install skiff on this machine: run the install script from
-https://github.com/chronick/skiff, then create ~/.config/skiff/config.yml
+https://github.com/algonormative/skiff, then create ~/.config/skiff/config.yml
 that manages the following services: [describe your services here]
 ```
 
 **Opinionated** — install skiff and scaffold a version-controlled "rig" repo:
 ```
 Install skiff on this machine: run the install script from
-https://github.com/chronick/skiff, then scaffold a "rig" repo at ~/rig with
+https://github.com/algonormative/skiff, then scaffold a "rig" repo at ~/rig with
 this structure:
 
   ~/rig/

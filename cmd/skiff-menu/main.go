@@ -8,7 +8,7 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/chronick/skiff/internal/client"
+	"github.com/algonormative/skiff/internal/client"
 )
 
 const maxResourceItems = 20

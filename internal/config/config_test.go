@@ -147,7 +147,7 @@ services:
     command: ["openclaw", "gateway", "start"]
 containers:
   obs.lookout:
-    image: ghcr.io/chronick/lookout-go:latest
+    image: ghcr.io/algonormative/lookout-go:latest
 schedules:
   auto.morning-digest:
     command: ["echo", "morning"]

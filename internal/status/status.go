@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chronick/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/runtime"
 )
 
 // ResourceState represents the current state of a resource.

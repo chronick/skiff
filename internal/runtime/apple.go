@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chronick/skiff/internal/runner"
+	"github.com/algonormative/skiff/internal/runner"
 )
 
 // AppleRuntime implements ContainerRuntime using the Apple Container CLI

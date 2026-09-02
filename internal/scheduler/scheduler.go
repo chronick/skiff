@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/logbuf"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/logbuf"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 // killWaitDelay caps how long we wait for a killed command's output pipes to

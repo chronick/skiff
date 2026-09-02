@@ -1,4 +1,4 @@
-module github.com/chronick/skiff
+module github.com/algonormative/skiff
 
 go 1.25.0
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 func (d *Daemon) setupRoutes() *http.ServeMux {

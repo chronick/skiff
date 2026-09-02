@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/logbuf"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/logbuf"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 // --- Mock infrastructure ---

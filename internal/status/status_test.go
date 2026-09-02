@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/runtime"
 )
 
 func TestSetAndGetResource(t *testing.T) {

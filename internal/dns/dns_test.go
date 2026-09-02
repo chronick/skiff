@@ -6,7 +6,7 @@ import (
 
 	mdns "github.com/miekg/dns"
 
-	"github.com/chronick/skiff/internal/testutil"
+	"github.com/algonormative/skiff/internal/testutil"
 )
 
 func newTestDNS() *ServiceDNS {

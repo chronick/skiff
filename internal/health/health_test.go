@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/status"
-	"github.com/chronick/skiff/internal/testutil"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/testutil"
 )
 
 func newTestChecker() (*Checker, *testutil.MockProcessRunner, *status.SharedState) {

@@ -22,11 +22,11 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/daemon"
-	"github.com/chronick/skiff/internal/plist"
-	"github.com/chronick/skiff/internal/systemd"
-	"github.com/chronick/skiff/internal/tui"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/daemon"
+	"github.com/algonormative/skiff/internal/plist"
+	"github.com/algonormative/skiff/internal/systemd"
+	"github.com/algonormative/skiff/internal/tui"
 )
 
 var (
@@ -1187,7 +1187,7 @@ func upgradeCmd() *cobra.Command {
 			defer os.RemoveAll(tmpDir)
 
 			tmpBin := filepath.Join(tmpDir, "skiff")
-			dlCmd := exec.Command("gh", "release", "download", "--repo", "chronick/skiff", "--pattern", asset, "--output", tmpBin)
+			dlCmd := exec.Command("gh", "release", "download", "--repo", "algonormative/skiff", "--pattern", asset, "--output", tmpBin)
 			dlCmd.Stdout = os.Stdout
 			dlCmd.Stderr = os.Stderr
 			if err := dlCmd.Run(); err != nil {

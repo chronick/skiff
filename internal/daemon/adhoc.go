@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/chronick/skiff/internal/runtime"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 // AdhocRunRequest is the JSON body for POST /v1/containers/run.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chronick/skiff/internal/runtime"
-	"github.com/chronick/skiff/internal/testutil"
+	"github.com/algonormative/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/testutil"
 )
 
 func newDockerTestRuntime() (*runtime.DockerRuntime, *testutil.MockProcessRunner) {

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chronick/skiff/internal/config"
-	"github.com/chronick/skiff/internal/runtime"
-	"github.com/chronick/skiff/internal/status"
+	"github.com/algonormative/skiff/internal/config"
+	"github.com/algonormative/skiff/internal/runtime"
+	"github.com/algonormative/skiff/internal/status"
 )
 
 // --- POST /v1/containers/run ---
@@ -19,7 +19,7 @@ func TestHandleContainerRun_Basic(t *testing.T) {
 	mux := d.setupRoutes()
 
 	rr := doRequest(mux, "POST", "/v1/containers/run", map[string]interface{}{
-		"image": "ghcr.io/chronick/sandbox:latest",
+		"image": "ghcr.io/algonormative/sandbox:latest",
 	})
 
 	if rr.Code != http.StatusOK {
@@ -86,7 +86,7 @@ func TestHandleContainerRun_WithAllOptions(t *testing.T) {
 	mux := d.setupRoutes()
 
 	rr := doRequest(mux, "POST", "/v1/containers/run", map[string]interface{}{
-		"image":        "ghcr.io/chronick/sandbox:latest",
+		"image":        "ghcr.io/algonormative/sandbox:latest",
 		"command":      []string{"sleep", "infinity"},
 		"volumes":      []string{"/host:/container"},
 		"env":          map[string]string{"KEY": "value"},
@@ -108,7 +108,7 @@ func TestHandleContainerRun_WithAllOptions(t *testing.T) {
 		t.Fatalf("expected 1 Run call, got %d", len(calls))
 	}
 	rtCfg := calls[0].Args.(runtime.ContainerConfig)
-	if rtCfg.Image != "ghcr.io/chronick/sandbox:latest" {
+	if rtCfg.Image != "ghcr.io/algonormative/sandbox:latest" {
 		t.Errorf("expected image, got %q", rtCfg.Image)
 	}
 	if len(rtCfg.Volumes) != 1 || rtCfg.Volumes[0] != "/host:/container" {
